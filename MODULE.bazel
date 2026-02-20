@@ -1,0 +1,22 @@
+"""Bazel Module for Verus verification rules.
+
+Provides Bazel rules for Verus SMT-backed Rust verification.
+Downloads pre-built Verus release binaries from GitHub.
+"""
+
+module(
+    name = "rules_verus",
+    version = "0.1.0",
+    compatibility_level = 1,
+)
+
+# Core dependencies
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+bazel_dep(name = "platforms", version = "0.0.10")
+
+# Verus toolchain extension
+verus = use_extension("//verus:extensions.bzl", "verus")
+verus.toolchain(version = "0.2026.02.15")
+use_repo(verus, "verus_toolchains")
+
+register_toolchains("@verus_toolchains//:all")
