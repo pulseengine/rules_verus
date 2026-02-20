@@ -53,6 +53,13 @@ def _verus_verify_impl(ctx):
     script_content = """\
 #!/bin/bash
 set -euo pipefail
+
+# Verus needs rustup to locate the Rust sysroot.
+# Ensure common rustup locations are on PATH for sandboxed execution.
+for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
+    [ -d "$p" ] && export PATH="$p:$PATH"
+done
+
 export VERUS_Z3_PATH="{z3}"
 "{verus}" --crate-type lib {extra_flags} "$@" && touch "{stamp}"
 """.format(
@@ -77,7 +84,11 @@ export VERUS_Z3_PATH="{z3}"
         tools = [script],
         mnemonic = "VerusVerify",
         progress_message = "Verifying %s with Verus" % ctx.label,
-        use_default_shell_env = True,
+        execution_requirements = {
+            # Verus requires host rustup to find the Rust sysroot.
+            # TODO: Bundle Rust sysroot in the toolchain for full hermeticity.
+            "no-sandbox": "1",
+        },
     )
 
     return [
@@ -136,6 +147,11 @@ def _verus_test_impl(ctx):
     script_content = """\
 #!/bin/bash
 set -euo pipefail
+
+# Verus needs rustup to locate the Rust sysroot.
+for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
+    [ -d "$p" ] && export PATH="$p:$PATH"
+done
 
 # Resolve paths relative to runfiles
 VERUS="{verus}"
