@@ -55,7 +55,9 @@ def _verus_verify_impl(ctx):
 set -euo pipefail
 
 # Verus needs rustup to locate the Rust sysroot.
-# Ensure common rustup locations are on PATH for sandboxed execution.
+# Ensure common rustup locations are on PATH.
+HOME="${{HOME:-$(eval echo ~$(whoami))}}"
+export HOME
 for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
     [ -d "$p" ] && export PATH="$p:$PATH"
 done
@@ -149,6 +151,8 @@ def _verus_test_impl(ctx):
 set -euo pipefail
 
 # Verus needs rustup to locate the Rust sysroot.
+HOME="${{HOME:-$(eval echo ~$(whoami))}}"
+export HOME
 for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
     [ -d "$p" ] && export PATH="$p:$PATH"
 done
