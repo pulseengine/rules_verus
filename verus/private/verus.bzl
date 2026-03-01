@@ -5,8 +5,72 @@ VerusInfo = provider(
     fields = {
         "srcs": "depset of File: The verified source files",
         "stamp": "File: Verification stamp file",
+        "crate_name": "String: The crate name for --extern resolution",
+        "transitive_stamps": "depset of File: All dependency verification stamps",
     },
 )
+
+def _resolve_crate_root(ctx):
+    """Determine the crate root file.
+
+    Priority:
+    1. Explicit crate_root attribute
+    2. lib.rs if present in srcs
+    3. First file in srcs (original behavior)
+    """
+    srcs = ctx.files.srcs
+    if not srcs:
+        fail("{} requires at least one source file".format(ctx.attr._rule_kind))
+
+    # 1. Explicit crate_root
+    if ctx.file.crate_root:
+        return ctx.file.crate_root
+
+    # 2. Look for lib.rs in srcs
+    for src in srcs:
+        if src.basename == "lib.rs":
+            return src
+
+    # 3. Fall back to first source file
+    return srcs[0]
+
+def _resolve_crate_name(ctx):
+    """Determine the crate name.
+
+    Priority:
+    1. Explicit crate_name attribute
+    2. Target name with hyphens replaced by underscores
+    """
+    if ctx.attr.crate_name:
+        return ctx.attr.crate_name
+    return ctx.label.name.replace("-", "_")
+
+def _collect_dep_info(ctx):
+    """Collect dependency information from deps.
+
+    Returns:
+        tuple of (extern_flags list, dep_stamps depset, dep_inputs depset)
+    """
+    extern_flags = []
+    dep_stamps = []
+    all_transitive_stamps = []
+
+    for dep in ctx.attr.deps:
+        info = dep[VerusInfo]
+        extern_flags.append("--extern")
+        extern_flags.append("{name}={stamp}".format(
+            name = info.crate_name,
+            stamp = info.stamp.path,
+        ))
+        dep_stamps.append(info.stamp)
+        all_transitive_stamps.append(info.transitive_stamps)
+
+    transitive_stamps = depset(
+        dep_stamps,
+        transitive = all_transitive_stamps,
+    )
+
+    return extern_flags, transitive_stamps
 
 def _verus_verify_impl(ctx):
     """Run Verus verification on Rust source files."""
@@ -17,21 +81,14 @@ def _verus_verify_impl(ctx):
     if not srcs:
         fail("verus_library requires at least one source file")
 
+    crate_root = _resolve_crate_root(ctx)
+    crate_name = _resolve_crate_name(ctx)
+
     # Create stamp file to mark successful verification
     stamp = ctx.actions.declare_file(ctx.label.name + ".verus_verified")
 
-    # Build the verus command
-    # Verus expects VERUS_Z3_PATH to point to the Z3 binary
-    args = ctx.actions.args()
-    args.add("--crate-type", "lib")
-
-    # Add extra flags from the rule
-    for flag in ctx.attr.extra_flags:
-        args.add(flag)
-
-    # Add all source files (Verus verifies one file at a time)
-    # For multi-file projects, the main entry point should be listed first
-    main_src = srcs[0]
+    # Collect dependency info
+    extern_flags, transitive_stamps = _collect_dep_info(ctx)
 
     # Collect all tool inputs
     tool_inputs = [verus_info.verus, verus_info.z3]
@@ -41,7 +98,7 @@ def _verus_verify_impl(ctx):
         tool_inputs.append(verus_info.vstd_rlib)
 
     inputs = depset(
-        srcs + tool_inputs,
+        srcs + tool_inputs + transitive_stamps.to_list(),
         transitive = [verus_info.builtin],
     )
 
@@ -49,6 +106,12 @@ def _verus_verify_impl(ctx):
     # Use a wrapper script that sets up the environment.
     verus_bin = verus_info.verus
     z3_bin = verus_info.z3
+
+    # Build flags string: extra_flags + extern flags + crate name
+    all_flags = list(ctx.attr.extra_flags)
+    all_flags.append("--crate-name")
+    all_flags.append(crate_name)
+    all_flags.extend(extern_flags)
 
     script_content = """\
 #!/bin/bash
@@ -63,11 +126,11 @@ for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
 done
 
 export VERUS_Z3_PATH="{z3}"
-"{verus}" --crate-type lib {extra_flags} "$@" && touch "{stamp}"
+"{verus}" --crate-type lib {flags} "$@" && touch "{stamp}"
 """.format(
         verus = verus_bin.path,
         z3 = z3_bin.path,
-        extra_flags = " ".join(ctx.attr.extra_flags),
+        flags = " ".join(all_flags),
         stamp = stamp.path,
     )
 
@@ -80,7 +143,7 @@ export VERUS_Z3_PATH="{z3}"
 
     ctx.actions.run(
         executable = script,
-        arguments = [main_src.path],
+        arguments = [crate_root.path],
         inputs = inputs,
         outputs = [stamp],
         tools = [script],
@@ -101,6 +164,11 @@ export VERUS_Z3_PATH="{z3}"
         VerusInfo(
             srcs = depset(srcs),
             stamp = stamp,
+            crate_name = crate_name,
+            transitive_stamps = depset(
+                [stamp],
+                transitive = [transitive_stamps],
+            ),
         ),
     ]
 
@@ -112,10 +180,22 @@ verus_library = rule(
             mandatory = True,
             doc = "Rust source files to verify with Verus",
         ),
+        "crate_root": attr.label(
+            allow_single_file = [".rs"],
+            doc = "Explicit crate root file. If not set, uses lib.rs from srcs or srcs[0].",
+        ),
+        "crate_name": attr.string(
+            doc = "Crate name for --crate-name flag. Defaults to target name with hyphens as underscores.",
+        ),
+        "deps": attr.label_list(
+            providers = [VerusInfo],
+            doc = "Other verus_library targets this depends on for --extern resolution.",
+        ),
         "extra_flags": attr.string_list(
             default = [],
             doc = "Extra flags to pass to verus (e.g., ['--multiple-errors', '5'])",
         ),
+        "_rule_kind": attr.string(default = "verus_library"),
     },
     toolchains = ["@rules_verus//verus:toolchain_type"],
     doc = "Verify Rust source files with Verus. Produces a stamp file on success.",
@@ -130,7 +210,11 @@ def _verus_test_impl(ctx):
     if not srcs:
         fail("verus_test requires at least one source file")
 
-    main_src = srcs[0]
+    crate_root = _resolve_crate_root(ctx)
+    crate_name = _resolve_crate_name(ctx)
+
+    # Collect dependency info
+    extern_flags, transitive_stamps = _collect_dep_info(ctx)
 
     # Collect all tool inputs
     tool_files = [verus_info.verus, verus_info.z3]
@@ -139,11 +223,17 @@ def _verus_test_impl(ctx):
     if verus_info.vstd_rlib:
         tool_files.append(verus_info.vstd_rlib)
 
-    runfiles_list = srcs + tool_files
+    runfiles_list = srcs + tool_files + transitive_stamps.to_list()
     runfiles_list += verus_info.builtin.to_list()
 
     verus_bin = verus_info.verus
     z3_bin = verus_info.z3
+
+    # Build flags string
+    all_flags = list(ctx.attr.extra_flags)
+    all_flags.append("--crate-name")
+    all_flags.append(crate_name)
+    all_flags.extend(extern_flags)
 
     # Create a test runner script
     script_content = """\
@@ -165,11 +255,12 @@ SRC="{src}"
 export VERUS_Z3_PATH="$Z3"
 
 echo "=== Verus Verification Test ==="
+echo "Crate: {crate_name}"
 echo "Source: $SRC"
 echo "Verus: $VERUS"
 echo ""
 
-"$VERUS" --crate-type lib {extra_flags} "$SRC"
+"$VERUS" --crate-type lib {flags} "$SRC"
 STATUS=$?
 
 if [ $STATUS -eq 0 ]; then
@@ -184,8 +275,9 @@ exit $STATUS
 """.format(
         verus = verus_bin.short_path,
         z3 = z3_bin.short_path,
-        src = main_src.short_path,
-        extra_flags = " ".join(ctx.attr.extra_flags),
+        src = crate_root.short_path,
+        crate_name = crate_name,
+        flags = " ".join(all_flags),
     )
 
     test_script = ctx.actions.declare_file(ctx.label.name + "_test.sh")
@@ -210,10 +302,22 @@ verus_test = rule(
             mandatory = True,
             doc = "Rust source files to verify with Verus",
         ),
+        "crate_root": attr.label(
+            allow_single_file = [".rs"],
+            doc = "Explicit crate root file. If not set, uses lib.rs from srcs or srcs[0].",
+        ),
+        "crate_name": attr.string(
+            doc = "Crate name for --crate-name flag. Defaults to target name with hyphens as underscores.",
+        ),
+        "deps": attr.label_list(
+            providers = [VerusInfo],
+            doc = "Other verus_library targets this depends on for --extern resolution.",
+        ),
         "extra_flags": attr.string_list(
             default = [],
             doc = "Extra flags to pass to verus",
         ),
+        "_rule_kind": attr.string(default = "verus_test"),
     },
     toolchains = ["@rules_verus//verus:toolchain_type"],
     test = True,
