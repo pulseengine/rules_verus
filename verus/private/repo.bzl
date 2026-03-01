@@ -79,6 +79,7 @@ verus_toolchain_info(
     builtin_rlib = ":builtin_rlib",
     builtin_macros_dylib = ":builtin_macros_dylib",
     version = "{version}",
+    rust_toolchain = "{rust_toolchain}",
 )
 
 toolchain(
@@ -144,10 +145,21 @@ def _verus_release_impl(rctx):
     else:
         exec_constraints = "[]"
 
+    # Extract the Rust toolchain version from version.json
+    # Verus bundles this file with the release and it specifies which
+    # Rust toolchain rust_verify was compiled against.
+    rust_toolchain = ""
+    result = rctx.execute(["python3", "-c",
+        "import json; d=json.load(open('version.json')); print(d['verus']['toolchain'].split('-')[0])",
+    ])
+    if result.return_code == 0:
+        rust_toolchain = result.stdout.strip()
+
     # Write BUILD file
     rctx.file("BUILD.bazel", _BUILD_FILE_CONTENT.format(
         version = version,
         exec_constraints = exec_constraints,
+        rust_toolchain = rust_toolchain,
     ))
 
 verus_release = repository_rule(
