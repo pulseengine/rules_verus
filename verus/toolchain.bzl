@@ -4,11 +4,14 @@
 VerusToolchainInfo = provider(
     doc = "Information about a Verus verification toolchain",
     fields = {
-        "verus": "File: The verus verifier binary",
+        "verus": "File: The verus wrapper binary (kept for compatibility)",
+        "rust_verify": "File: The rust_verify binary (preferred verifier driver)",
         "z3": "File: The Z3 SMT solver binary",
         "vstd": "File: The vstd pre-verified standard library (vstd.vir)",
         "vstd_rlib": "File: The vstd compiled library (libvstd.rlib)",
         "builtin": "depset of File: The builtin crate sources",
+        "builtin_rlib": "File: The builtin compiled library (libverus_builtin.rlib)",
+        "builtin_macros_dylib": "File: The builtin_macros proc-macro library",
         "version": "String: Verus version",
     },
 )
@@ -17,6 +20,9 @@ def _verus_toolchain_info_impl(ctx):
     """Create a VerusToolchainInfo provider for the toolchain."""
     verus_files = ctx.files.verus
     verus = verus_files[0] if verus_files else None
+
+    rust_verify_files = ctx.files.rust_verify
+    rust_verify = rust_verify_files[0] if rust_verify_files else None
 
     z3_files = ctx.files.z3
     z3 = z3_files[0] if z3_files else None
@@ -31,12 +37,21 @@ def _verus_toolchain_info_impl(ctx):
     vstd_rlib_files = ctx.files.vstd_rlib
     vstd_rlib = vstd_rlib_files[0] if vstd_rlib_files else None
 
+    builtin_rlib_files = ctx.files.builtin_rlib
+    builtin_rlib = builtin_rlib_files[0] if builtin_rlib_files else None
+
+    builtin_macros_files = ctx.files.builtin_macros_dylib
+    builtin_macros_dylib = builtin_macros_files[0] if builtin_macros_files else None
+
     verus_info = struct(
         verus = verus,
+        rust_verify = rust_verify,
         z3 = z3,
         vstd = vstd,
         vstd_rlib = vstd_rlib,
         builtin = depset(ctx.files.builtin),
+        builtin_rlib = builtin_rlib,
+        builtin_macros_dylib = builtin_macros_dylib,
         version = ctx.attr.version,
     )
 
@@ -51,7 +66,11 @@ verus_toolchain_info = rule(
     attrs = {
         "verus": attr.label(
             allow_files = True,
-            doc = "The verus verifier binary",
+            doc = "The verus wrapper binary",
+        ),
+        "rust_verify": attr.label(
+            allow_files = True,
+            doc = "The rust_verify binary (modified rustc driver)",
         ),
         "z3": attr.label(
             allow_files = True,
@@ -68,6 +87,14 @@ verus_toolchain_info = rule(
         "builtin": attr.label(
             allow_files = True,
             doc = "The builtin crate sources",
+        ),
+        "builtin_rlib": attr.label(
+            allow_files = True,
+            doc = "The builtin compiled rlib (libverus_builtin.rlib)",
+        ),
+        "builtin_macros_dylib": attr.label(
+            allow_files = True,
+            doc = "The builtin_macros proc-macro library",
         ),
         "version": attr.string(
             doc = "Verus version string",
