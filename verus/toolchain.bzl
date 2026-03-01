@@ -13,6 +13,7 @@ VerusToolchainInfo = provider(
         "builtin_rlib": "File: The builtin compiled library (libverus_builtin.rlib)",
         "builtin_macros_dylib": "File: The builtin_macros proc-macro library",
         "version": "String: Verus version",
+        "rust_toolchain": "String: Rust toolchain version that rust_verify was built against (e.g., '1.93.0')",
     },
 )
 
@@ -53,6 +54,7 @@ def _verus_toolchain_info_impl(ctx):
         builtin_rlib = builtin_rlib,
         builtin_macros_dylib = builtin_macros_dylib,
         version = ctx.attr.version,
+        rust_toolchain = ctx.attr.rust_toolchain,
     )
 
     return [
@@ -98,6 +100,10 @@ verus_toolchain_info = rule(
         ),
         "version": attr.string(
             doc = "Verus version string",
+        ),
+        "rust_toolchain": attr.string(
+            default = "",
+            doc = "Rust toolchain version that rust_verify was built against (e.g., '1.93.0')",
         ),
     },
     doc = "Provides Verus toolchain information",
