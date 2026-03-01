@@ -93,25 +93,113 @@ bazel build //:counter_verified
 bazel test //:counter_test
 ```
 
+## Multi-File Crates
+
+For crates with multiple source files, list all files in `srcs` and optionally specify a `crate_root`:
+
+```starlark
+verus_library(
+    name = "my_proofs",
+    srcs = [
+        "src/lib.rs",
+        "src/vec_proofs.rs",
+        "src/map_proofs.rs",
+    ],
+    crate_root = "src/lib.rs",   # Optional: defaults to lib.rs in srcs, or srcs[0]
+    crate_name = "my_proofs",    # Optional: defaults to target name
+)
+```
+
+The `crate_root` file should contain `mod` declarations for the other source files:
+
+```rust
+// src/lib.rs
+mod vec_proofs;
+mod map_proofs;
+```
+
+## Cross-Crate Dependencies
+
+Use `deps` to express verification dependencies between crates. Downstream targets automatically wait for upstream verification to complete.
+
+```starlark
+# Base verified library
+verus_library(
+    name = "foundation_proofs",
+    srcs = ["foundation.rs"],
+)
+
+# Depends on foundation_proofs verification
+verus_library(
+    name = "runtime_proofs",
+    srcs = ["runtime.rs"],
+    deps = [":foundation_proofs"],
+)
+
+# Test that depends on both
+verus_test(
+    name = "integration_test",
+    srcs = ["integration.rs"],
+    deps = [
+        ":foundation_proofs",
+        ":runtime_proofs",
+    ],
+)
+```
+
+When `deps` are specified, the rule passes `--extern {crate_name}={stamp_path}` to Verus for each dependency, enabling cross-crate verification.
+
 ## API Reference
 
 ### verus_library
 
 Verifies Rust source files with Verus. Produces a stamp file on success.
 
-| Attribute | Description |
-|-----------|-------------|
-| `srcs` | Rust source files to verify (`.rs`) |
-| `extra_flags` | Extra flags to pass to Verus (e.g., `["--multiple-errors", "5"]`) |
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `srcs` | `label_list` | Rust source files to verify (`.rs`). **Required.** |
+| `crate_root` | `label` | Explicit crate root file. If not set, uses `lib.rs` from srcs or `srcs[0]`. |
+| `crate_name` | `string` | Crate name for `--crate-name` flag. Defaults to target name with hyphens as underscores. |
+| `deps` | `label_list` | Other `verus_library` targets this depends on for `--extern` resolution. |
+| `extra_flags` | `string_list` | Extra flags to pass to Verus (e.g., `["--multiple-errors", "5"]`). |
 
 ### verus_test
 
 Test target that runs Verus verification. Passes if all proofs verify.
 
-| Attribute | Description |
-|-----------|-------------|
-| `srcs` | Rust source files to verify (`.rs`) |
-| `extra_flags` | Extra flags to pass to Verus |
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `srcs` | `label_list` | Rust source files to verify (`.rs`). **Required.** |
+| `crate_root` | `label` | Explicit crate root file. If not set, uses `lib.rs` from srcs or `srcs[0]`. |
+| `crate_name` | `string` | Crate name for `--crate-name` flag. Defaults to target name with hyphens as underscores. |
+| `deps` | `label_list` | Other `verus_library` targets this depends on for `--extern` resolution. |
+| `extra_flags` | `string_list` | Extra flags to pass to Verus. |
+
+## Kiln Integration Example
+
+Verifying Kiln's safety-critical `StaticVec` bounded collection:
+
+```starlark
+verus_library(
+    name = "kiln_static_vec_proofs",
+    srcs = [
+        "kiln-foundation/src/verus_proofs/mod.rs",
+        "kiln-foundation/src/verus_proofs/static_vec_proofs.rs",
+    ],
+    crate_root = "kiln-foundation/src/verus_proofs/mod.rs",
+    crate_name = "kiln_static_vec_proofs",
+)
+
+verus_test(
+    name = "kiln_static_vec_verify",
+    srcs = [
+        "kiln-foundation/src/verus_proofs/mod.rs",
+        "kiln-foundation/src/verus_proofs/static_vec_proofs.rs",
+    ],
+    crate_root = "kiln-foundation/src/verus_proofs/mod.rs",
+    crate_name = "kiln_static_vec_proofs",
+)
+```
 
 ## Supported Platforms
 
@@ -128,6 +216,7 @@ Test target that runs Verus verification. Passes if all proofs verify.
 2. The toolchain provides the Verus binary, Z3 SMT solver, and vstd standard library
 3. `verus_library` runs Verus verification and produces a stamp file on success
 4. `verus_test` wraps verification as a Bazel test target for CI integration
+5. Cross-crate `deps` ensure verification ordering via stamp file dependencies
 
 ## License
 

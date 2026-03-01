@@ -11,10 +11,10 @@ _KNOWN_VERSIONS = {
     "0.2026.02.15": {
         "tag": "0.2026.02.15.61aa1bf",
         "sha256": {
-            "aarch64-apple-darwin": "",
-            "x86_64-apple-darwin": "",
-            "x86_64-unknown-linux-gnu": "",
-            "x86_64-pc-windows-msvc": "",
+            "aarch64-apple-darwin": "185ac0631d3639da5ba09d6e50218af43efffa58383625dd070e6c2ecc11da65",
+            "x86_64-apple-darwin": "bfb79474f078782104d6a80b21069f104eed8f7bac51d16a0216ca07d0b021e6",
+            "x86_64-unknown-linux-gnu": "d02ce8c026e3304e3d463355678dced46d5d8340fdebd9a8cdaea27c29338e0b",
+            "x86_64-pc-windows-msvc": "63ba4e37a530a27bac3fab5bb47f6885888ab181e6d5c95bae1d5a01fcd6956d",
         },
     },
 }
