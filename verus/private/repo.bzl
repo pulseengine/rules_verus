@@ -14,10 +14,16 @@ load("@rules_verus//verus:toolchain.bzl", "verus_toolchain_info")
 
 package(default_visibility = ["//visibility:public"])
 
-# Verus verifier binary
+# Verus wrapper binary (kept for reference; rust_verify is preferred)
 filegroup(
     name = "verus_bin",
     srcs = ["verus"],
+)
+
+# rust_verify binary (the actual rustc driver — preferred over verus wrapper)
+filegroup(
+    name = "rust_verify_bin",
+    srcs = ["rust_verify"],
 )
 
 # Z3 SMT solver
@@ -38,6 +44,18 @@ filegroup(
     srcs = ["libvstd.rlib"],
 )
 
+# Compiled builtin rlib
+filegroup(
+    name = "builtin_rlib",
+    srcs = ["libverus_builtin.rlib"],
+)
+
+# Compiled builtin_macros proc-macro (platform-dependent extension)
+filegroup(
+    name = "builtin_macros_dylib",
+    srcs = glob(["libverus_builtin_macros.*"]),
+)
+
 # Builtin crate sources
 filegroup(
     name = "builtin_srcs",
@@ -53,10 +71,13 @@ filegroup(
 verus_toolchain_info(
     name = "verus_toolchain_info",
     verus = ":verus_bin",
+    rust_verify = ":rust_verify_bin",
     z3 = ":z3_bin",
     vstd = ":vstd_files",
     vstd_rlib = ":vstd_rlib",
     builtin = ":builtin_srcs",
+    builtin_rlib = ":builtin_rlib",
+    builtin_macros_dylib = ":builtin_macros_dylib",
     version = "{version}",
 )
 

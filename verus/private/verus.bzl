@@ -90,22 +90,27 @@ def _verus_verify_impl(ctx):
     # Collect dependency info
     extern_flags, transitive_stamps = _collect_dep_info(ctx)
 
-    # Collect all tool inputs
-    tool_inputs = [verus_info.verus, verus_info.z3]
+    # Collect all tool inputs — use rust_verify instead of verus wrapper
+    rust_verify = verus_info.rust_verify
+    z3 = verus_info.z3
+    builtin_rlib = verus_info.builtin_rlib
+    builtin_macros_dylib = verus_info.builtin_macros_dylib
+    vstd_rlib = verus_info.vstd_rlib
+
+    tool_inputs = [rust_verify, z3]
+    if builtin_rlib:
+        tool_inputs.append(builtin_rlib)
+    if builtin_macros_dylib:
+        tool_inputs.append(builtin_macros_dylib)
     if verus_info.vstd:
         tool_inputs.append(verus_info.vstd)
-    if verus_info.vstd_rlib:
-        tool_inputs.append(verus_info.vstd_rlib)
+    if vstd_rlib:
+        tool_inputs.append(vstd_rlib)
 
     inputs = depset(
         srcs + tool_inputs + transitive_stamps.to_list(),
         transitive = [verus_info.builtin],
     )
-
-    # Verus needs its support files in the same directory as the binary.
-    # Use a wrapper script that sets up the environment.
-    verus_bin = verus_info.verus
-    z3_bin = verus_info.z3
 
     # Build flags string: extra_flags + extern flags + crate name
     all_flags = list(ctx.attr.extra_flags)
@@ -113,23 +118,54 @@ def _verus_verify_impl(ctx):
     all_flags.append(crate_name)
     all_flags.extend(extern_flags)
 
+    # Build --extern flags for builtin crates
+    builtin_extern_flags = ""
+    if builtin_rlib:
+        builtin_extern_flags += ' --extern builtin="{builtin_rlib}"'.format(
+            builtin_rlib = builtin_rlib.path,
+        )
+    if builtin_macros_dylib:
+        builtin_extern_flags += ' --extern builtin_macros="{builtin_macros}"'.format(
+            builtin_macros = builtin_macros_dylib.path,
+        )
+    if vstd_rlib:
+        builtin_extern_flags += ' --extern vstd="{vstd_rlib}"'.format(
+            vstd_rlib = vstd_rlib.path,
+        )
+
     script_content = """\
 #!/bin/bash
 set -euo pipefail
 
-# Verus needs rustup to locate the Rust sysroot.
-# Ensure common rustup locations are on PATH.
+# Locate Rust sysroot for rust_verify (modified rustc driver)
 HOME="${{HOME:-$(eval echo ~$(whoami))}}"
 export HOME
 for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
     [ -d "$p" ] && export PATH="$p:$PATH"
 done
 
-export VERUS_Z3_PATH="{z3}"
-"{verus}" --crate-type lib {flags} "$@" && touch "{stamp}"
+SYSROOT=$(rustc --print sysroot 2>/dev/null || true)
+if [ -z "$SYSROOT" ]; then
+    echo "ERROR: Cannot determine Rust sysroot. Is rustc installed?" >&2
+    exit 1
+fi
+
+# rust_verify needs rustc's libraries and Verus libraries
+TOOLCHAIN_DIR=$(dirname "{rust_verify}")
+case "$(uname)" in
+    Darwin) export DYLD_LIBRARY_PATH="$SYSROOT/lib:$TOOLCHAIN_DIR:${{DYLD_LIBRARY_PATH:-}}" ;;
+    *)      export LD_LIBRARY_PATH="$SYSROOT/lib:$TOOLCHAIN_DIR:${{LD_LIBRARY_PATH:-}}" ;;
+esac
+
+# Put z3 on PATH so rust_verify can find it
+export PATH="$(dirname "{z3}"):$PATH"
+
+"{rust_verify}" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \
+    {builtin_extern_flags} {flags} "$@" && touch "{stamp}"
 """.format(
-        verus = verus_bin.path,
-        z3 = z3_bin.path,
+        rust_verify = rust_verify.path,
+        z3 = z3.path,
+        builtin_extern_flags = builtin_extern_flags,
         flags = " ".join(all_flags),
         stamp = stamp.path,
     )
@@ -150,7 +186,7 @@ export VERUS_Z3_PATH="{z3}"
         mnemonic = "VerusVerify",
         progress_message = "Verifying %s with Verus" % ctx.label,
         execution_requirements = {
-            # Verus requires host rustup to find the Rust sysroot.
+            # rust_verify requires host rustc sysroot.
             # TODO: Bundle Rust sysroot in the toolchain for full hermeticity.
             "no-sandbox": "1",
         },
@@ -216,18 +252,25 @@ def _verus_test_impl(ctx):
     # Collect dependency info
     extern_flags, transitive_stamps = _collect_dep_info(ctx)
 
-    # Collect all tool inputs
-    tool_files = [verus_info.verus, verus_info.z3]
+    # Collect all tool inputs — use rust_verify instead of verus wrapper
+    rust_verify = verus_info.rust_verify
+    z3 = verus_info.z3
+    builtin_rlib = verus_info.builtin_rlib
+    builtin_macros_dylib = verus_info.builtin_macros_dylib
+    vstd_rlib = verus_info.vstd_rlib
+
+    tool_files = [rust_verify, z3]
+    if builtin_rlib:
+        tool_files.append(builtin_rlib)
+    if builtin_macros_dylib:
+        tool_files.append(builtin_macros_dylib)
     if verus_info.vstd:
         tool_files.append(verus_info.vstd)
-    if verus_info.vstd_rlib:
-        tool_files.append(verus_info.vstd_rlib)
+    if vstd_rlib:
+        tool_files.append(vstd_rlib)
 
     runfiles_list = srcs + tool_files + transitive_stamps.to_list()
     runfiles_list += verus_info.builtin.to_list()
-
-    verus_bin = verus_info.verus
-    z3_bin = verus_info.z3
 
     # Build flags string
     all_flags = list(ctx.attr.extra_flags)
@@ -235,32 +278,60 @@ def _verus_test_impl(ctx):
     all_flags.append(crate_name)
     all_flags.extend(extern_flags)
 
+    # Build --extern flags for builtin crates
+    builtin_extern_flags = ""
+    if builtin_rlib:
+        builtin_extern_flags += ' --extern builtin="{builtin_rlib}"'.format(
+            builtin_rlib = builtin_rlib.short_path,
+        )
+    if builtin_macros_dylib:
+        builtin_extern_flags += ' --extern builtin_macros="{builtin_macros}"'.format(
+            builtin_macros = builtin_macros_dylib.short_path,
+        )
+    if vstd_rlib:
+        builtin_extern_flags += ' --extern vstd="{vstd_rlib}"'.format(
+            vstd_rlib = vstd_rlib.short_path,
+        )
+
     # Create a test runner script
     script_content = """\
 #!/bin/bash
 set -euo pipefail
 
-# Verus needs rustup to locate the Rust sysroot.
+# Locate Rust sysroot for rust_verify (modified rustc driver)
 HOME="${{HOME:-$(eval echo ~$(whoami))}}"
 export HOME
 for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
     [ -d "$p" ] && export PATH="$p:$PATH"
 done
 
-# Resolve paths relative to runfiles
-VERUS="{verus}"
-Z3="{z3}"
-SRC="{src}"
+SYSROOT=$(rustc --print sysroot 2>/dev/null || true)
+if [ -z "$SYSROOT" ]; then
+    echo "ERROR: Cannot determine Rust sysroot. Is rustc installed?" >&2
+    exit 1
+fi
 
-export VERUS_Z3_PATH="$Z3"
+# rust_verify needs rustc's libraries and Verus libraries
+RUST_VERIFY="{rust_verify}"
+TOOLCHAIN_DIR=$(dirname "$RUST_VERIFY")
+case "$(uname)" in
+    Darwin) export DYLD_LIBRARY_PATH="$SYSROOT/lib:$TOOLCHAIN_DIR:${{DYLD_LIBRARY_PATH:-}}" ;;
+    *)      export LD_LIBRARY_PATH="$SYSROOT/lib:$TOOLCHAIN_DIR:${{LD_LIBRARY_PATH:-}}" ;;
+esac
+
+# Put z3 on PATH so rust_verify can find it
+export PATH="$(dirname "{z3}"):$PATH"
+
+SRC="{src}"
 
 echo "=== Verus Verification Test ==="
 echo "Crate: {crate_name}"
 echo "Source: $SRC"
-echo "Verus: $VERUS"
+echo "Verifier: $RUST_VERIFY"
 echo ""
 
-"$VERUS" --crate-type lib {flags} "$SRC"
+"$RUST_VERIFY" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \
+    {builtin_extern_flags} {flags} "$SRC"
 STATUS=$?
 
 if [ $STATUS -eq 0 ]; then
@@ -273,10 +344,11 @@ fi
 
 exit $STATUS
 """.format(
-        verus = verus_bin.short_path,
-        z3 = z3_bin.short_path,
+        rust_verify = rust_verify.short_path,
+        z3 = z3.short_path,
         src = crate_root.short_path,
         crate_name = crate_name,
+        builtin_extern_flags = builtin_extern_flags,
         flags = " ".join(all_flags),
     )
 
