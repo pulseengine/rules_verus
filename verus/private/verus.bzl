@@ -140,28 +140,37 @@ def _verus_verify_impl(ctx):
 #!/bin/bash
 set -euo pipefail
 
-# Locate Rust sysroot for rust_verify (modified rustc driver).
-# Bazel sets HOME to a temp directory inside its execroot, so ~/.cargo/bin and
-# ~/.rustup won't be found. We detect the real home from the password database.
-REAL_HOME=$(eval echo ~$(id -un 2>/dev/null) 2>/dev/null || echo "${{HOME:-/root}}")
-if [ -d "$REAL_HOME/.rustup" ]; then
-    export HOME="$REAL_HOME"
-fi
-for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
-    [ -d "$p" ] && export PATH="$p:$PATH"
-done
-
-# rust_verify is compiled against a specific Rust toolchain version.
-# Use that exact version for the sysroot to get matching librustc_driver.
+# Determine Rust sysroot for rust_verify.
+# Priority: 1) hermetically provisioned sysroot, 2) host rustup
+SYSROOT=""
 RUST_TC="{rust_toolchain}"
-if [ -n "$RUST_TC" ]; then
-    SYSROOT=$(rustc +"$RUST_TC" --print sysroot 2>/dev/null || true)
+
+# Try hermetic sysroot from rules_rust (if configured)
+if [ -n "{rust_sysroot}" ] && [ -d "{rust_sysroot}" ]; then
+    SYSROOT="{rust_sysroot}"
 fi
-if [ -z "${{SYSROOT:-}}" ]; then
-    SYSROOT=$(rustc --print sysroot 2>/dev/null || true)
+
+# Fallback: host rustup
+if [ -z "$SYSROOT" ]; then
+    REAL_HOME=$(eval echo ~$(id -un 2>/dev/null) 2>/dev/null || echo "${{HOME:-/root}}")
+    if [ -d "$REAL_HOME/.rustup" ]; then
+        export HOME="$REAL_HOME"
+    fi
+    for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
+        [ -d "$p" ] && export PATH="$p:$PATH"
+    done
+
+    if [ -n "$RUST_TC" ]; then
+        SYSROOT=$(rustc +"$RUST_TC" --print sysroot 2>/dev/null || true)
+    fi
+    if [ -z "$SYSROOT" ]; then
+        SYSROOT=$(rustc --print sysroot 2>/dev/null || true)
+    fi
 fi
-if [ -z "${{SYSROOT:-}}" ]; then
-    echo "ERROR: Cannot determine Rust sysroot. Is rustc installed?" >&2
+
+if [ -z "$SYSROOT" ]; then
+    echo "ERROR: Cannot determine Rust sysroot." >&2
+    echo "Either configure hermetic Rust nightly or install rustc/rustup with toolchain $RUST_TC" >&2
     exit 1
 fi
 
@@ -175,12 +184,13 @@ esac
 # Put z3 on PATH so rust_verify can find it
 export PATH="$(dirname "{z3}"):$PATH"
 
-"{rust_verify}" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \
+"{rust_verify}" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \\
     {builtin_extern_flags} {flags} "$@" && touch "{stamp}"
 """.format(
         rust_verify = rust_verify.path,
         z3 = z3.path,
         rust_toolchain = rust_toolchain,
+        rust_sysroot = verus_info.rust_sysroot,
         builtin_extern_flags = builtin_extern_flags,
         flags = " ".join(all_flags),
         stamp = stamp.path,
@@ -193,6 +203,10 @@ export PATH="$(dirname "{z3}"):$PATH"
         is_executable = True,
     )
 
+    execution_requirements = {}
+    if not verus_info.rust_sysroot:
+        execution_requirements["no-sandbox"] = "1"
+
     ctx.actions.run(
         executable = script,
         arguments = [crate_root.path],
@@ -201,11 +215,7 @@ export PATH="$(dirname "{z3}"):$PATH"
         tools = [script],
         mnemonic = "VerusVerify",
         progress_message = "Verifying %s with Verus" % ctx.label,
-        execution_requirements = {
-            # rust_verify requires host rustc sysroot.
-            # TODO: Bundle Rust sysroot in the toolchain for full hermeticity.
-            "no-sandbox": "1",
-        },
+        execution_requirements = execution_requirements,
     )
 
     return [
@@ -317,30 +327,37 @@ def _verus_test_impl(ctx):
 #!/bin/bash
 set -euo pipefail
 
-# Locate Rust sysroot for rust_verify (modified rustc driver).
-# Bazel sets HOME to a temp directory inside its execroot, so ~/.cargo/bin and
-# ~/.rustup won't be found. We detect the real home from the password database.
-REAL_HOME=$(eval echo ~$(id -un 2>/dev/null) 2>/dev/null || echo "${{HOME:-/root}}")
-if [ -d "$REAL_HOME/.rustup" ]; then
-    export HOME="$REAL_HOME"
-fi
-for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
-    [ -d "$p" ] && export PATH="$p:$PATH"
-done
-
-# rust_verify is compiled against a specific Rust toolchain version.
-# Use that exact version for the sysroot to get matching librustc_driver.
+# Determine Rust sysroot for rust_verify.
+# Priority: 1) hermetically provisioned sysroot, 2) host rustup
+SYSROOT=""
 RUST_TC="{rust_toolchain}"
-if [ -n "$RUST_TC" ]; then
-    SYSROOT=$(rustc +"$RUST_TC" --print sysroot 2>/dev/null || true)
+
+# Try hermetic sysroot from rules_rust (if configured)
+if [ -n "{rust_sysroot}" ] && [ -d "{rust_sysroot}" ]; then
+    SYSROOT="{rust_sysroot}"
 fi
-if [ -z "${{SYSROOT:-}}" ]; then
-    SYSROOT=$(rustc --print sysroot 2>/dev/null || true)
+
+# Fallback: host rustup
+if [ -z "$SYSROOT" ]; then
+    REAL_HOME=$(eval echo ~$(id -un 2>/dev/null) 2>/dev/null || echo "${{HOME:-/root}}")
+    if [ -d "$REAL_HOME/.rustup" ]; then
+        export HOME="$REAL_HOME"
+    fi
+    for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
+        [ -d "$p" ] && export PATH="$p:$PATH"
+    done
+
+    if [ -n "$RUST_TC" ]; then
+        SYSROOT=$(rustc +"$RUST_TC" --print sysroot 2>/dev/null || true)
+    fi
+    if [ -z "$SYSROOT" ]; then
+        SYSROOT=$(rustc --print sysroot 2>/dev/null || true)
+    fi
 fi
-if [ -z "${{SYSROOT:-}}" ]; then
-    echo "ERROR: Cannot determine Rust sysroot. Is rustc/rustup installed?" >&2
-    echo "rust_verify requires Rust toolchain $RUST_TC" >&2
-    echo "Attempted HOME=$HOME, PATH includes: $(echo $PATH | tr ':' '\\n' | grep -E 'cargo|rustup' || echo none)" >&2
+
+if [ -z "$SYSROOT" ]; then
+    echo "ERROR: Cannot determine Rust sysroot." >&2
+    echo "Either configure hermetic Rust nightly or install rustc/rustup with toolchain $RUST_TC" >&2
     exit 1
 fi
 
@@ -364,7 +381,7 @@ echo "Verifier: $RUST_VERIFY"
 echo "Rust sysroot: $SYSROOT"
 echo ""
 
-"$RUST_VERIFY" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \
+"$RUST_VERIFY" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \\
     {builtin_extern_flags} {flags} "$SRC"
 STATUS=$?
 
@@ -383,6 +400,7 @@ exit $STATUS
         src = crate_root.short_path,
         crate_name = crate_name,
         rust_toolchain = rust_toolchain,
+        rust_sysroot = verus_info.rust_sysroot,
         builtin_extern_flags = builtin_extern_flags,
         flags = " ".join(all_flags),
     )
@@ -394,13 +412,16 @@ exit $STATUS
         is_executable = True,
     )
 
+    exec_info = {}
+    if not verus_info.rust_sysroot:
+        exec_info["no-sandbox"] = "1"
+
     return [
         DefaultInfo(
             executable = test_script,
             runfiles = ctx.runfiles(files = runfiles_list),
         ),
-        # Disable sandbox so rust_verify can access host rustc/rustup for sysroot
-        testing.ExecutionInfo({"no-sandbox": "1"}),
+        testing.ExecutionInfo(exec_info),
     ]
 
 verus_test = rule(
