@@ -25,12 +25,23 @@ Bazel rules for [Verus](https://github.com/verus-lang/verus) SMT-backed Rust ver
 
 ```starlark
 bazel_dep(name = "rules_verus", version = "0.1.0")
+bazel_dep(name = "rules_rust", version = "0.65.0")  # or your project's version
 
 git_override(
     module_name = "rules_verus",
     remote = "https://github.com/pulseengine/rules_verus.git",
     commit = "<latest-commit>",
 )
+
+# Register a Rust toolchain that includes the version Verus needs (1.93.0).
+# verus_library/verus_test resolve @rules_rust//rust:toolchain_type for the sysroot.
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    versions = ["1.93.0"],  # must match Verus's rust_verify (see extensions.bzl)
+)
+use_repo(rust, "rust_toolchains")
+register_toolchains("@rust_toolchains//:all")
 
 # Configure Verus toolchain
 verus = use_extension("@rules_verus//verus:extensions.bzl", "verus")
@@ -297,10 +308,19 @@ verus_strip_test(
 
 ### Hermetic Rust Toolchain
 
-`rules_verus` provisions the exact Rust toolchain version that `rust_verify` was built against
-via `rules_rust`. This is determined from the Verus release's `version.json` and stored in
-`_KNOWN_VERSIONS` in `extensions.bzl`. When a hermetic sysroot is available, verification runs
-inside Bazel's sandbox (fully hermetic). Otherwise, it falls back to host `rustup`.
+`verus_library` and `verus_test` resolve `@rules_rust//rust:toolchain_type` to get a hermetic
+Rust sysroot. **Consumers must register a Rust toolchain** that includes the version matching
+Verus's `rust_verify` binary (see `rust_version` in `_KNOWN_VERSIONS` in `extensions.bzl`).
+
+For Verus 0.2026.02.15, this is Rust **1.93.0**. Add to your MODULE.bazel:
+
+```starlark
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(versions = ["1.93.0"])
+```
+
+`rules_verus` declares `rules_rust >= 0.56.0` as a minimum — it does not pin a specific version
+or register toolchains, so it won't conflict with your project's existing `rules_rust` version.
 
 ## License
 
