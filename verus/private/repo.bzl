@@ -62,6 +62,12 @@ filegroup(
     srcs = glob(["builtin/**"]),
 )
 
+# Bundled Rust sysroot (librustc_driver and friends)
+filegroup(
+    name = "rust_sysroot_files",
+    srcs = glob(["rust_sysroot/**"]),
+)
+
 # All Verus files (for runfiles)
 filegroup(
     name = "all_files",
@@ -80,6 +86,7 @@ verus_toolchain_info(
     builtin_macros_dylib = ":builtin_macros_dylib",
     version = "{version}",
     rust_toolchain = "{rust_toolchain}",
+    rust_sysroot = ":rust_sysroot_files",
 )
 
 toolchain(
@@ -155,6 +162,26 @@ def _verus_release_impl(rctx):
     if result.return_code == 0:
         rust_toolchain = result.stdout.strip()
 
+    # Download the matching Rust sysroot (librustc_driver, libstd, etc.)
+    # rust_verify is dynamically linked against these and crashes without them.
+    rust_nightly = rctx.attr.rust_nightly
+    if rust_nightly:
+        # Download the rustc component from Rust's official dist
+        rustc_url = "https://static.rust-lang.org/dist/{date}/rustc-nightly-{triple}.tar.xz".format(
+            date = rust_nightly,
+            triple = platform,
+        )
+        rctx.download_and_extract(
+            url = rustc_url,
+            output = "rust_sysroot_tmp",
+            stripPrefix = "rustc-nightly-{triple}/rustc".format(triple = platform),
+        )
+        # Move to final location
+        rctx.execute(["mv", "rust_sysroot_tmp", "rust_sysroot"])
+    else:
+        # No nightly specified — create empty sysroot directory
+        rctx.execute(["mkdir", "-p", "rust_sysroot/lib"])
+
     # Write BUILD file
     rctx.file("BUILD.bazel", _BUILD_FILE_CONTENT.format(
         version = version,
@@ -176,6 +203,10 @@ verus_release = repository_rule(
         "sha256": attr.string(
             default = "",
             doc = "SHA-256 hash of the release zip (empty to skip verification)",
+        ),
+        "rust_nightly": attr.string(
+            default = "",
+            doc = "Nightly date (YYYY-MM-DD) for the Rust sysroot to bundle. Empty to skip.",
         ),
     },
     doc = "Downloads a pre-built Verus release binary from GitHub.",
