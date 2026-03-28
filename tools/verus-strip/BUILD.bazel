@@ -25,3 +25,14 @@ rust_test(
     name = "verus_strip_unit_test",
     crate = ":verus_strip_lib",
 )
+
+rust_test(
+    name = "verus_strip_integration_test",
+    srcs = ["tests/integration_test.rs"],
+    deps = [":verus_strip_lib"],
+    edition = "2024",
+    data = glob(["tests/fixtures/**"]),
+    env = {
+        "CARGO_MANIFEST_DIR": "tools/verus-strip",
+    },
+)
