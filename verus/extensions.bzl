@@ -10,6 +10,7 @@ load("//verus/private:repo.bzl", "verus_release")
 _KNOWN_VERSIONS = {
     "0.2026.02.15": {
         "tag": "0.2026.02.15.61aa1bf",
+        "rust_version": "1.93.0",  # Rust toolchain version that rust_verify was built against
         "sha256": {
             "aarch64-apple-darwin": "185ac0631d3639da5ba09d6e50218af43efffa58383625dd070e6c2ecc11da65",
             "x86_64-apple-darwin": "bfb79474f078782104d6a80b21069f104eed8f7bac51d16a0216ca07d0b021e6",
@@ -68,6 +69,10 @@ def _verus_impl(module_ctx):
         # Assume the version string is the full tag
         release_tag = version_key
         known_hashes = {}
+
+    rust_version = ""
+    if version_info:
+        rust_version = version_info.get("rust_version", "")
 
     # Create a repository for each supported platform
     platforms = _detect_platform(module_ctx)

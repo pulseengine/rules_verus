@@ -20,7 +20,10 @@ bazel_dep(name = "rules_rust", version = "0.69.0")
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2024",
-    versions = ["1.85.0"],
+    versions = [
+        "1.85.0",  # stable: builds verus-strip
+        "1.93.0",  # matches Verus's rust_verify (from version.json)
+    ],
 )
 use_repo(rust, "rust_toolchains")
 register_toolchains("@rust_toolchains//:all")
