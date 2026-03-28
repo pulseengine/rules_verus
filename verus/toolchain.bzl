@@ -14,8 +14,27 @@ VerusToolchainInfo = provider(
         "builtin_macros_dylib": "File: The builtin_macros proc-macro library",
         "version": "String: Verus version",
         "rust_toolchain": "String: Rust toolchain version that rust_verify was built against (e.g., '1.93.0')",
+        "rust_sysroot": "depset of File: Bundled Rust sysroot files (librustc_driver, libstd)",
+        "rust_sysroot_path": "String: Path to the bundled Rust sysroot directory",
     },
 )
+
+def _find_sysroot_path(files):
+    """Find the sysroot directory path from the bundled files.
+
+    The sysroot is the directory containing lib/librustc_driver-*.
+    We look for any file under rust_sysroot/lib/ and derive the sysroot path.
+    """
+    for f in files:
+        # Find any file under the lib/ subdirectory
+        parts = f.path.split("/")
+        for i, part in enumerate(parts):
+            if part == "rust_sysroot" and i + 1 < len(parts) and parts[i + 1] == "lib":
+                return "/".join(parts[:i + 1])
+    # Fallback: if there are files, use the first file's directory
+    if files:
+        return files[0].path.rsplit("/", 1)[0]
+    return ""
 
 def _verus_toolchain_info_impl(ctx):
     """Create a VerusToolchainInfo provider for the toolchain."""
@@ -55,6 +74,8 @@ def _verus_toolchain_info_impl(ctx):
         builtin_macros_dylib = builtin_macros_dylib,
         version = ctx.attr.version,
         rust_toolchain = ctx.attr.rust_toolchain,
+        rust_sysroot = depset(ctx.files.rust_sysroot),
+        rust_sysroot_path = _find_sysroot_path(ctx.files.rust_sysroot),
     )
 
     return [
@@ -104,6 +125,10 @@ verus_toolchain_info = rule(
         "rust_toolchain": attr.string(
             default = "",
             doc = "Rust toolchain version that rust_verify was built against (e.g., '1.93.0')",
+        ),
+        "rust_sysroot": attr.label(
+            allow_files = True,
+            doc = "Bundled Rust sysroot files (librustc_driver, libstd)",
         ),
     },
     doc = "Provides Verus toolchain information",

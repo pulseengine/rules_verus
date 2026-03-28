@@ -72,14 +72,13 @@ def _collect_dep_info(ctx):
 
     return extern_flags, transitive_stamps
 
-def _resolve_rust_sysroot(ctx):
-    """Resolve the Rust sysroot from rules_rust toolchain.
+def _resolve_rust_sysroot(verus_info):
+    """Get the bundled Rust sysroot from the Verus toolchain.
 
     Returns:
-        tuple of (sysroot_path string, all_files depset)
+        tuple of (sysroot_path string, sysroot_files depset)
     """
-    rust_tc = ctx.toolchains["@rules_rust//rust:toolchain_type"]
-    return rust_tc.sysroot, rust_tc.all_files
+    return verus_info.rust_sysroot_path, verus_info.rust_sysroot
 
 def _verus_verify_impl(ctx):
     """Run Verus verification on Rust source files."""
@@ -138,7 +137,7 @@ def _verus_verify_impl(ctx):
         )
 
     # Resolve Rust sysroot from rules_rust toolchain (hermetic)
-    rust_sysroot, rust_tc_files = _resolve_rust_sysroot(ctx)
+    rust_sysroot, rust_tc_files = _resolve_rust_sysroot(verus_info)
 
     # Add rules_rust toolchain files to inputs for sandbox access
     inputs = depset(
@@ -231,10 +230,7 @@ verus_library = rule(
         ),
         "_rule_kind": attr.string(default = "verus_library"),
     },
-    toolchains = [
-        "@rules_verus//verus:toolchain_type",
-        "@rules_rust//rust:toolchain_type",
-    ],
+    toolchains = ["@rules_verus//verus:toolchain_type"],
     doc = "Verify Rust source files with Verus. Produces a stamp file on success.",
 )
 
@@ -295,7 +291,7 @@ def _verus_test_impl(ctx):
         )
 
     # Resolve Rust sysroot from rules_rust toolchain (hermetic)
-    rust_sysroot, rust_tc_files = _resolve_rust_sysroot(ctx)
+    rust_sysroot, rust_tc_files = _resolve_rust_sysroot(verus_info)
 
     # Add rules_rust toolchain files to runfiles for sandbox access
     runfiles_list += rust_tc_files.to_list()
@@ -389,10 +385,7 @@ verus_test = rule(
         ),
         "_rule_kind": attr.string(default = "verus_test"),
     },
-    toolchains = [
-        "@rules_verus//verus:toolchain_type",
-        "@rules_rust//rust:toolchain_type",
-    ],
+    toolchains = ["@rules_verus//verus:toolchain_type"],
     test = True,
     doc = "Test target that runs Verus verification. Passes if all proofs verify.",
 )
