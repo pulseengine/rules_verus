@@ -14,7 +14,6 @@ VerusToolchainInfo = provider(
         "builtin_macros_dylib": "File: The builtin_macros proc-macro library",
         "version": "String: Verus version",
         "rust_toolchain": "String: Rust toolchain version that rust_verify was built against (e.g., '1.93.0')",
-        "rust_sysroot": "String: Path to the Rust sysroot provisioned by rules_rust (empty if not available)",
     },
 )
 
@@ -56,7 +55,6 @@ def _verus_toolchain_info_impl(ctx):
         builtin_macros_dylib = builtin_macros_dylib,
         version = ctx.attr.version,
         rust_toolchain = ctx.attr.rust_toolchain,
-        rust_sysroot = ctx.attr.rust_sysroot,
     )
 
     return [
@@ -106,10 +104,6 @@ verus_toolchain_info = rule(
         "rust_toolchain": attr.string(
             default = "",
             doc = "Rust toolchain version that rust_verify was built against (e.g., '1.93.0')",
-        ),
-        "rust_sysroot": attr.string(
-            default = "",
-            doc = "Path to the hermetically provisioned Rust sysroot",
         ),
     },
     doc = "Provides Verus toolchain information",

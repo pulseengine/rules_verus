@@ -70,13 +70,6 @@ def _verus_impl(module_ctx):
         release_tag = version_key
         known_hashes = {}
 
-    # TODO: Pass rust_version to verus_release() and use it to populate
-    # rust_sysroot in the toolchain, enabling fully hermetic verification
-    # without host rustup.
-    rust_version = ""
-    if version_info:
-        rust_version = version_info.get("rust_version", "")
-
     # Create a repository for each supported platform
     platforms = _detect_platform(module_ctx)
     for platform in platforms:
