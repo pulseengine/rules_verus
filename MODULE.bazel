@@ -17,6 +17,18 @@ bazel_dep(name = "platforms", version = "0.0.10")
 # Verus toolchain extension
 verus = use_extension("//verus:extensions.bzl", "verus")
 verus.toolchain(version = "0.2026.02.15")
-use_repo(verus, "verus_toolchains")
+use_repo(
+    verus,
+    "verus_toolchains",
+    "verus_toolchains_aarch64_apple_darwin",
+    "verus_toolchains_x86_64_apple_darwin",
+    "verus_toolchains_x86_64_unknown_linux_gnu",
+)
 
-register_toolchains("@verus_toolchains//:all")
+# Register all platform toolchains — Bazel selects the right one
+# based on exec_compatible_with constraints in each repo.
+register_toolchains(
+    "@verus_toolchains_aarch64_apple_darwin//:verus_toolchain",
+    "@verus_toolchains_x86_64_apple_darwin//:verus_toolchain",
+    "@verus_toolchains_x86_64_unknown_linux_gnu//:verus_toolchain",
+)

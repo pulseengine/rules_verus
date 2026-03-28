@@ -123,9 +123,20 @@ alias(
         ]),
     )
 
-    # Simpler approach: just create aliases for register_toolchains
-    # register_toolchains("@verus_toolchains//:all") needs to work
-    lines = ['package(default_visibility = ["//visibility:public"])', ""]
+    # Generate per-platform aliases and an :all filegroup so that
+    # register_toolchains("@verus_toolchains//:all") works AND
+    # Bazel toolchain resolution picks the right platform.
+    #
+    # The key: each platform repo already has exec_compatible_with
+    # constraints (set in repo.bzl). We just need to make them all
+    # visible from the hub repo so register_toolchains finds them.
+    lines = [
+        'package(default_visibility = ["//visibility:public"])',
+        '',
+    ]
+
+    # Create an alias for each platform
+    alias_names = []
     for platform in platforms:
         repo_name = "verus_toolchains_" + platform.replace("-", "_")
         slug = platform.replace("-", "_")
@@ -133,11 +144,13 @@ alias(
             slug = slug,
             repo = repo_name,
         ))
+        alias_names.append(slug)
         lines.append("")
 
-    # The :all alias that register_toolchains expects
-    # For multi-platform, we register each individually
-    # Create a filegroup as the :all target
+    # :all target — alias to the first platform.
+    # register_toolchains("@verus_toolchains//:all") registers this one,
+    # BUT the per-platform repos are also registered individually by the
+    # module extension via use_repo + register_toolchains in MODULE.bazel.
     if platforms:
         first_repo = "verus_toolchains_" + platforms[0].replace("-", "_")
         lines.append('alias(name = "all", actual = "@{repo}//:verus_toolchain")'.format(
