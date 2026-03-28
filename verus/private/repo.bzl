@@ -162,27 +162,39 @@ def _verus_release_impl(rctx):
     if result.return_code == 0:
         rust_toolchain = result.stdout.strip()
 
-    # Download the matching Rust sysroot (librustc_driver, libstd, etc.)
-    # rust_verify is dynamically linked against these and crashes without them.
-    # The version comes from version.json and must match exactly (hash in dylib name).
+    # Download the matching Rust sysroot (librustc_driver + rust-std).
+    # rust_verify is dynamically linked against librustc_driver and needs
+    # libstd/libcore/liballoc for compilation. Both must match exactly.
     rust_version = rctx.attr.rust_version
     if not rust_version and rust_toolchain:
         # Fallback: use version extracted from version.json
         rust_version = rust_toolchain
     if rust_version:
-        rustc_url = "https://static.rust-lang.org/dist/rustc-{version}-{triple}.tar.xz".format(
-            version = rust_version,
-            triple = platform,
-        )
+        # 1. Download rustc component (librustc_driver, rustc binary)
         rctx.download_and_extract(
-            url = rustc_url,
-            output = "rust_sysroot_tmp",
-            stripPrefix = "rustc-{version}-{triple}/rustc".format(
-                version = rust_version,
-                triple = platform,
+            url = "https://static.rust-lang.org/dist/rustc-{v}-{t}.tar.xz".format(
+                v = rust_version, t = platform,
+            ),
+            output = "rust_sysroot",
+            stripPrefix = "rustc-{v}-{t}/rustc".format(
+                v = rust_version, t = platform,
             ),
         )
-        rctx.execute(["mv", "rust_sysroot_tmp", "rust_sysroot"])
+
+        # 2. Download rust-std component (libstd, libcore, liballoc, etc.)
+        rctx.download_and_extract(
+            url = "https://static.rust-lang.org/dist/rust-std-{v}-{t}.tar.xz".format(
+                v = rust_version, t = platform,
+            ),
+            output = "rust_std_tmp",
+            stripPrefix = "rust-std-{v}-{t}/rust-std-{t}".format(
+                v = rust_version, t = platform,
+            ),
+        )
+
+        # Merge rust-std into sysroot (cp -R lib/rustlib into rust_sysroot/lib/rustlib)
+        rctx.execute(["cp", "-R", "rust_std_tmp/lib/rustlib", "rust_sysroot/lib/rustlib"])
+        rctx.execute(["rm", "-rf", "rust_std_tmp"])
     else:
         # No version known — create empty sysroot directory
         rctx.execute(["mkdir", "-p", "rust_sysroot/lib"])
