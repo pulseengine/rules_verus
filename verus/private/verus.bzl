@@ -72,6 +72,15 @@ def _collect_dep_info(ctx):
 
     return extern_flags, transitive_stamps
 
+def _resolve_rust_sysroot(ctx):
+    """Resolve the Rust sysroot from rules_rust toolchain.
+
+    Returns:
+        tuple of (sysroot_path string, all_files depset)
+    """
+    rust_tc = ctx.toolchains["@rules_rust//rust:toolchain_type"]
+    return rust_tc.sysroot, rust_tc.all_files
+
 def _verus_verify_impl(ctx):
     """Run Verus verification on Rust source files."""
     toolchain = ctx.toolchains["@rules_verus//verus:toolchain_type"]
@@ -107,11 +116,6 @@ def _verus_verify_impl(ctx):
     if vstd_rlib:
         tool_inputs.append(vstd_rlib)
 
-    inputs = depset(
-        srcs + tool_inputs + transitive_stamps.to_list(),
-        transitive = [verus_info.builtin],
-    )
-
     # Build flags string: extra_flags + extern flags + crate name
     all_flags = list(ctx.attr.extra_flags)
     all_flags.append("--crate-name")
@@ -133,37 +137,20 @@ def _verus_verify_impl(ctx):
             vstd_rlib = vstd_rlib.path,
         )
 
-    # Get the Rust toolchain version for sysroot detection
-    rust_toolchain = verus_info.rust_toolchain
+    # Resolve Rust sysroot from rules_rust toolchain (hermetic)
+    rust_sysroot, rust_tc_files = _resolve_rust_sysroot(ctx)
+
+    # Add rules_rust toolchain files to inputs for sandbox access
+    inputs = depset(
+        srcs + tool_inputs + transitive_stamps.to_list(),
+        transitive = [verus_info.builtin, rust_tc_files],
+    )
 
     script_content = """\
 #!/bin/bash
 set -euo pipefail
 
-# Locate Rust sysroot for rust_verify (modified rustc driver).
-# Bazel sets HOME to a temp directory inside its execroot, so ~/.cargo/bin and
-# ~/.rustup won't be found. We detect the real home from the password database.
-REAL_HOME=$(eval echo ~$(id -un 2>/dev/null) 2>/dev/null || echo "${{HOME:-/root}}")
-if [ -d "$REAL_HOME/.rustup" ]; then
-    export HOME="$REAL_HOME"
-fi
-for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
-    [ -d "$p" ] && export PATH="$p:$PATH"
-done
-
-# rust_verify is compiled against a specific Rust toolchain version.
-# Use that exact version for the sysroot to get matching librustc_driver.
-RUST_TC="{rust_toolchain}"
-if [ -n "$RUST_TC" ]; then
-    SYSROOT=$(rustc +"$RUST_TC" --print sysroot 2>/dev/null || true)
-fi
-if [ -z "${{SYSROOT:-}}" ]; then
-    SYSROOT=$(rustc --print sysroot 2>/dev/null || true)
-fi
-if [ -z "${{SYSROOT:-}}" ]; then
-    echo "ERROR: Cannot determine Rust sysroot. Is rustc installed?" >&2
-    exit 1
-fi
+SYSROOT="{rust_sysroot}"
 
 # rust_verify needs rustc's libraries and Verus libraries
 TOOLCHAIN_DIR=$(dirname "{rust_verify}")
@@ -175,12 +162,12 @@ esac
 # Put z3 on PATH so rust_verify can find it
 export PATH="$(dirname "{z3}"):$PATH"
 
-"{rust_verify}" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \
+"{rust_verify}" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \\
     {builtin_extern_flags} {flags} "$@" && touch "{stamp}"
 """.format(
+        rust_sysroot = rust_sysroot,
         rust_verify = rust_verify.path,
         z3 = z3.path,
-        rust_toolchain = rust_toolchain,
         builtin_extern_flags = builtin_extern_flags,
         flags = " ".join(all_flags),
         stamp = stamp.path,
@@ -201,11 +188,6 @@ export PATH="$(dirname "{z3}"):$PATH"
         tools = [script],
         mnemonic = "VerusVerify",
         progress_message = "Verifying %s with Verus" % ctx.label,
-        execution_requirements = {
-            # rust_verify requires host rustc sysroot.
-            # TODO: Bundle Rust sysroot in the toolchain for full hermeticity.
-            "no-sandbox": "1",
-        },
     )
 
     return [
@@ -249,7 +231,10 @@ verus_library = rule(
         ),
         "_rule_kind": attr.string(default = "verus_library"),
     },
-    toolchains = ["@rules_verus//verus:toolchain_type"],
+    toolchains = [
+        "@rules_verus//verus:toolchain_type",
+        "@rules_rust//rust:toolchain_type",
+    ],
     doc = "Verify Rust source files with Verus. Produces a stamp file on success.",
 )
 
@@ -309,40 +294,18 @@ def _verus_test_impl(ctx):
             vstd_rlib = vstd_rlib.short_path,
         )
 
-    # Get the Rust toolchain version for sysroot detection
-    rust_toolchain = verus_info.rust_toolchain
+    # Resolve Rust sysroot from rules_rust toolchain (hermetic)
+    rust_sysroot, rust_tc_files = _resolve_rust_sysroot(ctx)
+
+    # Add rules_rust toolchain files to runfiles for sandbox access
+    runfiles_list += rust_tc_files.to_list()
 
     # Create a test runner script
     script_content = """\
 #!/bin/bash
 set -euo pipefail
 
-# Locate Rust sysroot for rust_verify (modified rustc driver).
-# Bazel sets HOME to a temp directory inside its execroot, so ~/.cargo/bin and
-# ~/.rustup won't be found. We detect the real home from the password database.
-REAL_HOME=$(eval echo ~$(id -un 2>/dev/null) 2>/dev/null || echo "${{HOME:-/root}}")
-if [ -d "$REAL_HOME/.rustup" ]; then
-    export HOME="$REAL_HOME"
-fi
-for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
-    [ -d "$p" ] && export PATH="$p:$PATH"
-done
-
-# rust_verify is compiled against a specific Rust toolchain version.
-# Use that exact version for the sysroot to get matching librustc_driver.
-RUST_TC="{rust_toolchain}"
-if [ -n "$RUST_TC" ]; then
-    SYSROOT=$(rustc +"$RUST_TC" --print sysroot 2>/dev/null || true)
-fi
-if [ -z "${{SYSROOT:-}}" ]; then
-    SYSROOT=$(rustc --print sysroot 2>/dev/null || true)
-fi
-if [ -z "${{SYSROOT:-}}" ]; then
-    echo "ERROR: Cannot determine Rust sysroot. Is rustc/rustup installed?" >&2
-    echo "rust_verify requires Rust toolchain $RUST_TC" >&2
-    echo "Attempted HOME=$HOME, PATH includes: $(echo $PATH | tr ':' '\\n' | grep -E 'cargo|rustup' || echo none)" >&2
-    exit 1
-fi
+SYSROOT="{rust_sysroot}"
 
 # rust_verify needs rustc's libraries and Verus libraries
 RUST_VERIFY="{rust_verify}"
@@ -364,7 +327,7 @@ echo "Verifier: $RUST_VERIFY"
 echo "Rust sysroot: $SYSROOT"
 echo ""
 
-"$RUST_VERIFY" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \
+"$RUST_VERIFY" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \\
     {builtin_extern_flags} {flags} "$SRC"
 STATUS=$?
 
@@ -378,11 +341,11 @@ fi
 
 exit $STATUS
 """.format(
+        rust_sysroot = rust_sysroot,
         rust_verify = rust_verify.short_path,
         z3 = z3.short_path,
         src = crate_root.short_path,
         crate_name = crate_name,
-        rust_toolchain = rust_toolchain,
         builtin_extern_flags = builtin_extern_flags,
         flags = " ".join(all_flags),
     )
@@ -399,8 +362,6 @@ exit $STATUS
             executable = test_script,
             runfiles = ctx.runfiles(files = runfiles_list),
         ),
-        # Disable sandbox so rust_verify can access host rustc/rustup for sysroot
-        testing.ExecutionInfo({"no-sandbox": "1"}),
     ]
 
 verus_test = rule(
@@ -428,7 +389,10 @@ verus_test = rule(
         ),
         "_rule_kind": attr.string(default = "verus_test"),
     },
-    toolchains = ["@rules_verus//verus:toolchain_type"],
+    toolchains = [
+        "@rules_verus//verus:toolchain_type",
+        "@rules_rust//rust:toolchain_type",
+    ],
     test = True,
     doc = "Test target that runs Verus verification. Passes if all proofs verify.",
 )

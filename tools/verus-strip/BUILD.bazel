@@ -1,0 +1,38 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+rust_library(
+    name = "verus_strip_lib",
+    srcs = ["src/lib.rs"],
+    crate_name = "verus_strip",
+    deps = [
+        "@crates//:proc-macro2",
+        "@crates//:syn",
+        "@crates//:prettyplease",
+    ],
+    edition = "2024",
+    visibility = ["//visibility:public"],
+)
+
+rust_binary(
+    name = "verus-strip",
+    srcs = ["src/main.rs"],
+    deps = [":verus_strip_lib"],
+    edition = "2024",
+    visibility = ["//visibility:public"],
+)
+
+rust_test(
+    name = "verus_strip_unit_test",
+    crate = ":verus_strip_lib",
+)
+
+rust_test(
+    name = "verus_strip_integration_test",
+    srcs = ["tests/integration_test.rs"],
+    deps = [":verus_strip_lib"],
+    edition = "2024",
+    data = glob(["tests/fixtures/**"]),
+    env = {
+        "CARGO_MANIFEST_DIR": "tools/verus-strip",
+    },
+)

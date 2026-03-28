@@ -175,6 +175,47 @@ Test target that runs Verus verification. Passes if all proofs verify.
 | `deps` | `label_list` | Other `verus_library` targets this depends on for `--extern` resolution. |
 | `extra_flags` | `string_list` | Extra flags to pass to Verus. |
 
+### `verus_strip`
+
+Strip Verus verification annotations from Rust source files, producing plain Rust suitable for `cargo test`, `cargo kani`, `coq_of_rust`, or any standard Rust tooling.
+
+| Attribute | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `srcs` | `label_list` | Yes | — | Verus-annotated Rust source files (`.rs`) to strip |
+
+**Output:** One stripped `.rs` file per input (same basename), with all Verus annotations removed:
+- `verus! { }` macro wrapper
+- `use vstd::*` imports
+- `pub open spec fn` / `pub closed spec fn` / `pub proof fn` (entire items)
+- `requires` / `ensures` / `invariant` / `decreases` / `recommends` clauses
+- Named return type bindings: `-> (name: Type)` becomes `-> Type`
+- Verus `assert(...)` proof assertions (no `!`)
+- `#[verifier::*]` and `#[trigger]` attributes
+
+### `verus_strip_test`
+
+Test that stripping Verus annotations from source files produces output matching expected plain Rust files.
+
+| Attribute | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `verus_srcs` | `label_list` | Yes | — | Verus-annotated Rust source files |
+| `plain_srcs` | `label_list` | Yes | — | Expected plain Rust files (matched by basename) |
+
+### CLI Usage
+
+The `verus-strip` binary is also available for direct use:
+
+```bash
+# Strip to stdout
+bazel run //tools/verus-strip:verus-strip -- input.rs
+
+# Strip to file
+bazel run //tools/verus-strip:verus-strip -- input.rs -o output.rs
+
+# Check convergence between directories
+bazel run //tools/verus-strip:verus-strip -- --check src/ plain/
+```
+
 ## Kiln Integration Example
 
 Verifying Kiln's safety-critical `StaticVec` bounded collection:
@@ -201,6 +242,41 @@ verus_test(
 )
 ```
 
+## Multi-Track Verification
+
+`rules_verus` supports the multi-track verification pattern where Verus-annotated source code
+is stripped to plain Rust for use with other verification and testing tools:
+
+```
+src/sem.rs (Verus-annotated)
+  → verus_library (SMT/Z3 verification)
+  → verus_strip → plain/src/sem.rs (plain Rust)
+    → cargo test, cargo kani, cargo miri, coq_of_rust
+```
+
+```python
+load("@rules_verus//verus:defs.bzl", "verus_library", "verus_strip", "verus_strip_test")
+
+# Verify with Verus (SMT/Z3 track)
+verus_library(
+    name = "sem",
+    srcs = ["src/sem.rs"],
+)
+
+# Strip annotations for other verification tracks
+verus_strip(
+    name = "sem_plain",
+    srcs = ["src/sem.rs"],
+)
+
+# Ensure stripped output matches maintained plain/ directory
+verus_strip_test(
+    name = "sem_convergence",
+    verus_srcs = ["src/sem.rs"],
+    plain_srcs = ["plain/src/sem.rs"],
+)
+```
+
 ## Supported Platforms
 
 | Platform | Status |
@@ -217,6 +293,14 @@ verus_test(
 3. `verus_library` runs Verus verification and produces a stamp file on success
 4. `verus_test` wraps verification as a Bazel test target for CI integration
 5. Cross-crate `deps` ensure verification ordering via stamp file dependencies
+6. `verus_strip` removes Verus annotations to produce plain Rust for other tools
+
+### Hermetic Rust Toolchain
+
+`rules_verus` provisions the exact Rust toolchain version that `rust_verify` was built against
+via `rules_rust`. This is determined from the Verus release's `version.json` and stored in
+`_KNOWN_VERSIONS` in `extensions.bzl`. When a hermetic sysroot is available, verification runs
+inside Bazel's sandbox (fully hermetic). Otherwise, it falls back to host `rustup`.
 
 ## License
 
