@@ -14,6 +14,26 @@ module(
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
 bazel_dep(name = "platforms", version = "0.0.10")
 
+# Rust rules — needed to build verus-strip from source
+bazel_dep(name = "rules_rust", version = "0.69.0")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2024",
+    versions = ["1.85.0"],
+)
+use_repo(rust, "rust_toolchains")
+register_toolchains("@rust_toolchains//:all")
+
+# Crate dependencies for verus-strip
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//tools/verus-strip:Cargo.lock",
+    manifests = ["//tools/verus-strip:Cargo.toml"],
+)
+use_repo(crate, "crates")
+
 # Verus toolchain extension
 verus = use_extension("//verus:extensions.bzl", "verus")
 verus.toolchain(version = "0.2026.02.15")
