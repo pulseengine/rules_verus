@@ -164,22 +164,27 @@ def _verus_release_impl(rctx):
 
     # Download the matching Rust sysroot (librustc_driver, libstd, etc.)
     # rust_verify is dynamically linked against these and crashes without them.
-    rust_nightly = rctx.attr.rust_nightly
-    if rust_nightly:
-        # Download the rustc component from Rust's official dist
-        rustc_url = "https://static.rust-lang.org/dist/{date}/rustc-nightly-{triple}.tar.xz".format(
-            date = rust_nightly,
+    # The version comes from version.json and must match exactly (hash in dylib name).
+    rust_version = rctx.attr.rust_version
+    if not rust_version and rust_toolchain:
+        # Fallback: use version extracted from version.json
+        rust_version = rust_toolchain
+    if rust_version:
+        rustc_url = "https://static.rust-lang.org/dist/rustc-{version}-{triple}.tar.xz".format(
+            version = rust_version,
             triple = platform,
         )
         rctx.download_and_extract(
             url = rustc_url,
             output = "rust_sysroot_tmp",
-            stripPrefix = "rustc-nightly-{triple}/rustc".format(triple = platform),
+            stripPrefix = "rustc-{version}-{triple}/rustc".format(
+                version = rust_version,
+                triple = platform,
+            ),
         )
-        # Move to final location
         rctx.execute(["mv", "rust_sysroot_tmp", "rust_sysroot"])
     else:
-        # No nightly specified — create empty sysroot directory
+        # No version known — create empty sysroot directory
         rctx.execute(["mkdir", "-p", "rust_sysroot/lib"])
 
     # Write BUILD file
@@ -204,9 +209,9 @@ verus_release = repository_rule(
             default = "",
             doc = "SHA-256 hash of the release zip (empty to skip verification)",
         ),
-        "rust_nightly": attr.string(
+        "rust_version": attr.string(
             default = "",
-            doc = "Nightly date (YYYY-MM-DD) for the Rust sysroot to bundle. Empty to skip.",
+            doc = "Rust version for the sysroot to bundle (e.g., '1.93.0'). Matches version.json.",
         ),
     },
     doc = "Downloads a pre-built Verus release binary from GitHub.",
