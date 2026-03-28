@@ -72,6 +72,49 @@ def _collect_dep_info(ctx):
 
     return extern_flags, transitive_stamps
 
+def _sysroot_detection_script(rust_toolchain, rust_sysroot):
+    """Generate bash script fragment for Rust sysroot detection.
+
+    Tries hermetic sysroot first, falls back to host rustup.
+    """
+    return """\
+# Determine Rust sysroot for rust_verify.
+# Priority: 1) hermetically provisioned sysroot, 2) host rustup
+SYSROOT=""
+RUST_TC="{rust_toolchain}"
+
+# Try hermetic sysroot from rules_rust (if configured)
+if [ -n "{rust_sysroot}" ] && [ -d "{rust_sysroot}" ]; then
+    SYSROOT="{rust_sysroot}"
+fi
+
+# Fallback: host rustup
+if [ -z "$SYSROOT" ]; then
+    REAL_HOME=$(eval echo ~$(id -un 2>/dev/null) 2>/dev/null || echo "${{HOME:-/root}}")
+    if [ -d "$REAL_HOME/.rustup" ]; then
+        export HOME="$REAL_HOME"
+    fi
+    for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
+        [ -d "$p" ] && export PATH="$p:$PATH"
+    done
+
+    if [ -n "$RUST_TC" ]; then
+        SYSROOT=$(rustc +"$RUST_TC" --print sysroot 2>/dev/null || true)
+    fi
+    if [ -z "$SYSROOT" ]; then
+        SYSROOT=$(rustc --print sysroot 2>/dev/null || true)
+    fi
+fi
+
+if [ -z "$SYSROOT" ]; then
+    echo "ERROR: Cannot determine Rust sysroot." >&2
+    echo "Either configure hermetic Rust or install rustc/rustup with toolchain $RUST_TC" >&2
+    exit 1
+fi""".format(
+        rust_toolchain = rust_toolchain,
+        rust_sysroot = rust_sysroot,
+    )
+
 def _verus_verify_impl(ctx):
     """Run Verus verification on Rust source files."""
     toolchain = ctx.toolchains["@rules_verus//verus:toolchain_type"]
@@ -135,44 +178,13 @@ def _verus_verify_impl(ctx):
 
     # Get the Rust toolchain version for sysroot detection
     rust_toolchain = verus_info.rust_toolchain
+    sysroot_script = _sysroot_detection_script(rust_toolchain, verus_info.rust_sysroot)
 
     script_content = """\
 #!/bin/bash
 set -euo pipefail
 
-# Determine Rust sysroot for rust_verify.
-# Priority: 1) hermetically provisioned sysroot, 2) host rustup
-SYSROOT=""
-RUST_TC="{rust_toolchain}"
-
-# Try hermetic sysroot from rules_rust (if configured)
-if [ -n "{rust_sysroot}" ] && [ -d "{rust_sysroot}" ]; then
-    SYSROOT="{rust_sysroot}"
-fi
-
-# Fallback: host rustup
-if [ -z "$SYSROOT" ]; then
-    REAL_HOME=$(eval echo ~$(id -un 2>/dev/null) 2>/dev/null || echo "${{HOME:-/root}}")
-    if [ -d "$REAL_HOME/.rustup" ]; then
-        export HOME="$REAL_HOME"
-    fi
-    for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
-        [ -d "$p" ] && export PATH="$p:$PATH"
-    done
-
-    if [ -n "$RUST_TC" ]; then
-        SYSROOT=$(rustc +"$RUST_TC" --print sysroot 2>/dev/null || true)
-    fi
-    if [ -z "$SYSROOT" ]; then
-        SYSROOT=$(rustc --print sysroot 2>/dev/null || true)
-    fi
-fi
-
-if [ -z "$SYSROOT" ]; then
-    echo "ERROR: Cannot determine Rust sysroot." >&2
-    echo "Either configure hermetic Rust nightly or install rustc/rustup with toolchain $RUST_TC" >&2
-    exit 1
-fi
+{sysroot_script}
 
 # rust_verify needs rustc's libraries and Verus libraries
 TOOLCHAIN_DIR=$(dirname "{rust_verify}")
@@ -187,10 +199,9 @@ export PATH="$(dirname "{z3}"):$PATH"
 "{rust_verify}" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \\
     {builtin_extern_flags} {flags} "$@" && touch "{stamp}"
 """.format(
+        sysroot_script = sysroot_script,
         rust_verify = rust_verify.path,
         z3 = z3.path,
-        rust_toolchain = rust_toolchain,
-        rust_sysroot = verus_info.rust_sysroot,
         builtin_extern_flags = builtin_extern_flags,
         flags = " ".join(all_flags),
         stamp = stamp.path,
@@ -321,45 +332,14 @@ def _verus_test_impl(ctx):
 
     # Get the Rust toolchain version for sysroot detection
     rust_toolchain = verus_info.rust_toolchain
+    sysroot_script = _sysroot_detection_script(rust_toolchain, verus_info.rust_sysroot)
 
     # Create a test runner script
     script_content = """\
 #!/bin/bash
 set -euo pipefail
 
-# Determine Rust sysroot for rust_verify.
-# Priority: 1) hermetically provisioned sysroot, 2) host rustup
-SYSROOT=""
-RUST_TC="{rust_toolchain}"
-
-# Try hermetic sysroot from rules_rust (if configured)
-if [ -n "{rust_sysroot}" ] && [ -d "{rust_sysroot}" ]; then
-    SYSROOT="{rust_sysroot}"
-fi
-
-# Fallback: host rustup
-if [ -z "$SYSROOT" ]; then
-    REAL_HOME=$(eval echo ~$(id -un 2>/dev/null) 2>/dev/null || echo "${{HOME:-/root}}")
-    if [ -d "$REAL_HOME/.rustup" ]; then
-        export HOME="$REAL_HOME"
-    fi
-    for p in "$HOME/.cargo/bin" "$HOME/.rustup/shims" "/usr/local/bin"; do
-        [ -d "$p" ] && export PATH="$p:$PATH"
-    done
-
-    if [ -n "$RUST_TC" ]; then
-        SYSROOT=$(rustc +"$RUST_TC" --print sysroot 2>/dev/null || true)
-    fi
-    if [ -z "$SYSROOT" ]; then
-        SYSROOT=$(rustc --print sysroot 2>/dev/null || true)
-    fi
-fi
-
-if [ -z "$SYSROOT" ]; then
-    echo "ERROR: Cannot determine Rust sysroot." >&2
-    echo "Either configure hermetic Rust nightly or install rustc/rustup with toolchain $RUST_TC" >&2
-    exit 1
-fi
+{sysroot_script}
 
 # rust_verify needs rustc's libraries and Verus libraries
 RUST_VERIFY="{rust_verify}"
@@ -395,12 +375,11 @@ fi
 
 exit $STATUS
 """.format(
+        sysroot_script = sysroot_script,
         rust_verify = rust_verify.short_path,
         z3 = z3.short_path,
         src = crate_root.short_path,
         crate_name = crate_name,
-        rust_toolchain = rust_toolchain,
-        rust_sysroot = verus_info.rust_sysroot,
         builtin_extern_flags = builtin_extern_flags,
         flags = " ".join(all_flags),
     )

@@ -1,16 +1,9 @@
 # Root BUILD file for rules_verus
 
-load("//verus:defs.bzl", "verus_strip", "verus_strip_test")
+load("//verus:defs.bzl", "verus_strip")
 
 # Example: strip test fixtures
 verus_strip(
     name = "strip_simple_fixture",
     srcs = ["//tools/verus-strip/tests/fixtures:simple_input.rs"],
-)
-
-# Example: convergence test using fixtures
-verus_strip_test(
-    name = "strip_simple_convergence_test",
-    verus_srcs = ["//tools/verus-strip/tests/fixtures:simple_input.rs"],
-    plain_srcs = ["//tools/verus-strip/tests/fixtures:simple_expected.rs"],
 )

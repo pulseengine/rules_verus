@@ -189,7 +189,7 @@ fn strip_body(body: &str) -> String {
 
         // Check for verus clause keywords: requires, ensures, invariant, decreases
         if is_verus_clause_at(&trees, i) {
-            let keyword = if let TokenTree::Ident(id) = &trees[i] {
+            let _keyword = if let TokenTree::Ident(id) = &trees[i] {
                 id.to_string()
             } else {
                 String::new()
