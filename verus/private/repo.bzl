@@ -192,8 +192,8 @@ def _verus_release_impl(rctx):
             ),
         )
 
-        # Merge rust-std into sysroot (cp -R lib/rustlib into rust_sysroot/lib/rustlib)
-        rctx.execute(["cp", "-R", "rust_std_tmp/lib/rustlib", "rust_sysroot/lib/rustlib"])
+        # Merge rust-std into sysroot (trailing slash copies contents, not directory)
+        rctx.execute(["cp", "-R", "rust_std_tmp/lib/rustlib/", "rust_sysroot/lib/rustlib/"])
         rctx.execute(["rm", "-rf", "rust_std_tmp"])
     else:
         # No version known — create empty sysroot directory
