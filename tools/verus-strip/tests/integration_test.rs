@@ -138,3 +138,96 @@ fn strip_is_idempotent() {
         );
     }
 }
+
+/// Regression: verify that input files contain Verus constructs and stripped output does not.
+/// This catches regressions where the stripper stops removing certain constructs.
+#[test]
+fn stripped_output_has_no_verus_constructs() {
+    let dir = fixtures_dir();
+    let pairs = discover_fixture_pairs(&dir);
+
+    let verus_markers = &[
+        "verus!",
+        "use vstd",
+        "spec fn",
+        "proof fn",
+        "requires",
+        "ensures",
+        "#[verifier",
+        "#[trigger]",
+    ];
+
+    for (name, input_path, _) in &pairs {
+        let input = fs::read_to_string(input_path).unwrap();
+        let result = verus_strip::strip_file(&input);
+
+        assert!(
+            result.errors.is_empty(),
+            "{name}: strip produced parse errors: {:?}",
+            result.errors
+        );
+
+        // Input should contain at least some Verus constructs (otherwise it's a bad fixture)
+        let input_has_verus = verus_markers.iter().any(|m| input.contains(m));
+        assert!(
+            input_has_verus,
+            "{name}: input fixture has no Verus constructs — not a useful test"
+        );
+
+        // Stripped output must not contain any Verus constructs in code lines
+        // (comments may mention Verus keywords — that's fine)
+        let code_lines: Vec<&str> = result
+            .output
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                !t.is_empty() && !t.starts_with("//")
+            })
+            .collect();
+        let code_text = code_lines.join("\n");
+
+        for marker in verus_markers {
+            assert!(
+                !code_text.contains(marker),
+                "{name}: stripped code still contains '{marker}':\n{}",
+                code_lines
+                    .iter()
+                    .filter(|l| l.contains(marker))
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+    }
+}
+
+/// Regression: verify that stripped output preserves runtime code.
+/// Checks that struct definitions, impl blocks, and runtime fn signatures survive stripping.
+#[test]
+fn stripped_output_preserves_runtime_code() {
+    let dir = fixtures_dir();
+
+    // Simple fixture: should preserve struct Counter, fn new, fn increment, fn value
+    let input = fs::read_to_string(dir.join("simple_input.rs")).unwrap();
+    let result = verus_strip::strip_file(&input);
+    assert!(result.errors.is_empty());
+
+    for expected in &["struct Counter", "fn new", "fn increment", "fn value"] {
+        assert!(
+            result.output.contains(expected),
+            "simple: stripped output missing '{expected}'"
+        );
+    }
+
+    // Complex fixture: should preserve struct Stack, fn new, fn push, fn pop, fn drain_all, fn is_empty
+    let input = fs::read_to_string(dir.join("complex_input.rs")).unwrap();
+    let result = verus_strip::strip_file(&input);
+    assert!(result.errors.is_empty());
+
+    for expected in &["struct Stack", "fn new", "fn push", "fn pop", "fn drain_all", "fn is_empty"] {
+        assert!(
+            result.output.contains(expected),
+            "complex: stripped output missing '{expected}'"
+        );
+    }
+}
