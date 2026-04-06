@@ -326,6 +326,17 @@ echo "Crate: {crate_name}"
 echo "Source: $SRC"
 echo "Verifier: $RUST_VERIFY"
 echo "Rust sysroot: $SYSROOT"
+
+# Verify sysroot contains the target standard library
+TARGET_LIB="$SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib"
+if [ -d "$TARGET_LIB" ]; then
+    CORE_COUNT=$(ls "$TARGET_LIB"/libcore* 2>/dev/null | wc -l)
+    echo "Sysroot target libs: $CORE_COUNT core files in $TARGET_LIB"
+else
+    echo "WARNING: target lib dir missing: $TARGET_LIB"
+    echo "  Sysroot contents:"
+    ls -R "$SYSROOT/lib/rustlib/" 2>/dev/null | head -20 || echo "  (empty or missing)"
+fi
 echo ""
 
 "$RUST_VERIFY" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \\

@@ -193,7 +193,21 @@ def _verus_release_impl(rctx):
         )
 
         # Merge rust-std into sysroot (trailing slash copies contents, not directory)
-        rctx.execute(["cp", "-R", "rust_std_tmp/lib/rustlib/", "rust_sysroot/lib/rustlib/"])
+        merge = rctx.execute(["cp", "-R", "rust_std_tmp/lib/rustlib/", "rust_sysroot/lib/rustlib/"])
+        if merge.return_code != 0:
+            fail("Failed to merge rust-std into sysroot: " + merge.stderr)
+
+        # Verify the sysroot has libcore for this target
+        verify = rctx.execute(["sh", "-c",
+            "ls rust_sysroot/lib/rustlib/{t}/lib/libcore-*.rlib 2>/dev/null | head -1".format(t = platform),
+        ])
+        if verify.return_code != 0 or not verify.stdout.strip():
+            # List what we actually have for debugging
+            debug = rctx.execute(["find", "rust_sysroot/lib/rustlib", "-maxdepth", "3", "-type", "f"])
+            fail("Sysroot missing libcore for {t}. Contents:\n{d}".format(
+                t = platform, d = debug.stdout[:500],
+            ))
+
         rctx.execute(["rm", "-rf", "rust_std_tmp"])
     else:
         # No version known — create empty sysroot directory
