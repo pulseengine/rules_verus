@@ -156,8 +156,9 @@ set -euo pipefail
 
 # rust_verify needs rustc's libraries and Verus libraries.
 # Derive sysroot from rust_verify location — both live in the same repo root.
+# Resolve to absolute path to avoid issues with symlink-based runfiles.
 TOOLCHAIN_DIR=$(dirname "{rust_verify}")
-SYSROOT="$TOOLCHAIN_DIR/rust_sysroot"
+SYSROOT="$(cd "$TOOLCHAIN_DIR/rust_sysroot" 2>/dev/null && pwd)" || SYSROOT="$TOOLCHAIN_DIR/rust_sysroot"
 case "$(uname)" in
     Darwin) export DYLD_LIBRARY_PATH="$SYSROOT/lib:$TOOLCHAIN_DIR:${{DYLD_LIBRARY_PATH:-}}" ;;
     *)      export LD_LIBRARY_PATH="$SYSROOT/lib:$TOOLCHAIN_DIR:${{LD_LIBRARY_PATH:-}}" ;;
@@ -310,7 +311,10 @@ set -euo pipefail
 # This ensures the path is correct whether using f.path or f.short_path.
 RUST_VERIFY="{rust_verify}"
 TOOLCHAIN_DIR=$(dirname "$RUST_VERIFY")
-SYSROOT="$TOOLCHAIN_DIR/rust_sysroot"
+
+# Resolve sysroot to absolute path to avoid issues with symlink-based runfiles
+SYSROOT="$(cd "$TOOLCHAIN_DIR/rust_sysroot" 2>/dev/null && pwd)" || SYSROOT="$TOOLCHAIN_DIR/rust_sysroot"
+
 case "$(uname)" in
     Darwin) export DYLD_LIBRARY_PATH="$SYSROOT/lib:$TOOLCHAIN_DIR:${{DYLD_LIBRARY_PATH:-}}" ;;
     *)      export LD_LIBRARY_PATH="$SYSROOT/lib:$TOOLCHAIN_DIR:${{LD_LIBRARY_PATH:-}}" ;;
@@ -335,7 +339,7 @@ if [ -d "$TARGET_LIB" ]; then
 else
     echo "WARNING: target lib dir missing: $TARGET_LIB"
     echo "  Sysroot contents:"
-    ls -R "$SYSROOT/lib/rustlib/" 2>/dev/null | head -20 || echo "  (empty or missing)"
+    find "$SYSROOT" -maxdepth 4 -type f -o -type l 2>/dev/null | head -20 || echo "  (empty or missing)"
 fi
 echo ""
 
