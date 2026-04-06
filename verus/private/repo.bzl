@@ -182,33 +182,37 @@ def _verus_release_impl(rctx):
         )
 
         # 2. Download rust-std component (libstd, libcore, liballoc, etc.)
-        rctx.download_and_extract(
-            url = "https://static.rust-lang.org/dist/rust-std-{v}-{t}.tar.xz".format(
-                v = rust_version, t = platform,
-            ),
-            output = "rust_std_tmp",
-            stripPrefix = "rust-std-{v}-{t}/rust-std-{t}".format(
-                v = rust_version, t = platform,
-            ),
+        # Use download + tar directly instead of download_and_extract + cp -R,
+        # because the Bazel stripPrefix + cp merge fails silently on some
+        # platforms (the rlib files don't end up in the sysroot).
+        rust_std_url = "https://static.rust-lang.org/dist/rust-std-{v}-{t}.tar.xz".format(
+            v = rust_version, t = platform,
         )
+        rctx.download(url = rust_std_url, output = "rust_std.tar.xz")
 
-        # Merge rust-std into sysroot (trailing slash copies contents, not directory)
-        merge = rctx.execute(["cp", "-R", "rust_std_tmp/lib/rustlib/", "rust_sysroot/lib/rustlib/"])
-        if merge.return_code != 0:
-            fail("Failed to merge rust-std into sysroot: " + merge.stderr)
+        # Extract directly into sysroot, stripping the 2 top-level dirs:
+        #   rust-std-{v}-{t}/rust-std-{t}/lib/... → lib/...
+        # This merges rust-std's lib/rustlib/{target}/lib/*.rlib alongside
+        # the rustc component's lib/librustc_driver-*.so already in rust_sysroot.
+        extract = rctx.execute([
+            "tar", "-xf", "rust_std.tar.xz",
+            "-C", "rust_sysroot",
+            "--strip-components=2",
+        ])
+        if extract.return_code != 0:
+            fail("Failed to extract rust-std into sysroot: " + extract.stderr)
+
+        rctx.execute(["rm", "rust_std.tar.xz"])
 
         # Verify the sysroot has libcore for this target
         verify = rctx.execute(["sh", "-c",
             "ls rust_sysroot/lib/rustlib/{t}/lib/libcore-*.rlib 2>/dev/null | head -1".format(t = platform),
         ])
         if verify.return_code != 0 or not verify.stdout.strip():
-            # List what we actually have for debugging
             debug = rctx.execute(["find", "rust_sysroot/lib/rustlib", "-maxdepth", "3", "-type", "f"])
             fail("Sysroot missing libcore for {t}. Contents:\n{d}".format(
                 t = platform, d = debug.stdout[:500],
             ))
-
-        rctx.execute(["rm", "-rf", "rust_std_tmp"])
     else:
         # No version known — create empty sysroot directory
         rctx.execute(["mkdir", "-p", "rust_sysroot/lib"])
