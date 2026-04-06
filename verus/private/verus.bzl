@@ -73,12 +73,17 @@ def _collect_dep_info(ctx):
     return extern_flags, transitive_stamps
 
 def _resolve_rust_sysroot(verus_info):
-    """Get the bundled Rust sysroot from the Verus toolchain.
+    """Get the bundled Rust sysroot files from the Verus toolchain.
+
+    The sysroot directory is always a sibling of rust_verify in the same
+    repository, so the actual path is derived from the rust_verify binary
+    at script generation time (using dirname). This avoids coordinate-system
+    mismatches between f.path (execution root) and f.short_path (runfiles).
 
     Returns:
-        tuple of (sysroot_path string, sysroot_files depset)
+        depset of File: The sysroot files to include in inputs/runfiles.
     """
-    return verus_info.rust_sysroot_path, verus_info.rust_sysroot
+    return verus_info.rust_sysroot
 
 def _verus_verify_impl(ctx):
     """Run Verus verification on Rust source files."""
@@ -136,10 +141,10 @@ def _verus_verify_impl(ctx):
             vstd_rlib = vstd_rlib.path,
         )
 
-    # Resolve Rust sysroot from rules_rust toolchain (hermetic)
-    rust_sysroot, rust_tc_files = _resolve_rust_sysroot(verus_info)
+    # Resolve Rust sysroot files for sandbox access
+    rust_tc_files = _resolve_rust_sysroot(verus_info)
 
-    # Add rules_rust toolchain files to inputs for sandbox access
+    # Add sysroot files to inputs for sandbox access
     inputs = depset(
         srcs + tool_inputs + transitive_stamps.to_list(),
         transitive = [verus_info.builtin, rust_tc_files],
@@ -149,10 +154,10 @@ def _verus_verify_impl(ctx):
 #!/bin/bash
 set -euo pipefail
 
-SYSROOT="{rust_sysroot}"
-
-# rust_verify needs rustc's libraries and Verus libraries
+# rust_verify needs rustc's libraries and Verus libraries.
+# Derive sysroot from rust_verify location — both live in the same repo root.
 TOOLCHAIN_DIR=$(dirname "{rust_verify}")
+SYSROOT="$TOOLCHAIN_DIR/rust_sysroot"
 case "$(uname)" in
     Darwin) export DYLD_LIBRARY_PATH="$SYSROOT/lib:$TOOLCHAIN_DIR:${{DYLD_LIBRARY_PATH:-}}" ;;
     *)      export LD_LIBRARY_PATH="$SYSROOT/lib:$TOOLCHAIN_DIR:${{LD_LIBRARY_PATH:-}}" ;;
@@ -164,7 +169,6 @@ export PATH="$(dirname "{z3}"):$PATH"
 "{rust_verify}" --edition=2021 --crate-type lib --sysroot "$SYSROOT" \\
     {builtin_extern_flags} {flags} "$@" && touch "{stamp}"
 """.format(
-        rust_sysroot = rust_sysroot,
         rust_verify = rust_verify.path,
         z3 = z3.path,
         builtin_extern_flags = builtin_extern_flags,
@@ -290,10 +294,10 @@ def _verus_test_impl(ctx):
             vstd_rlib = vstd_rlib.short_path,
         )
 
-    # Resolve Rust sysroot from rules_rust toolchain (hermetic)
-    rust_sysroot, rust_tc_files = _resolve_rust_sysroot(verus_info)
+    # Resolve Rust sysroot files for runfiles access
+    rust_tc_files = _resolve_rust_sysroot(verus_info)
 
-    # Add rules_rust toolchain files to runfiles for sandbox access
+    # Add sysroot files to runfiles for sandbox access
     runfiles_list += rust_tc_files.to_list()
 
     # Create a test runner script
@@ -301,11 +305,12 @@ def _verus_test_impl(ctx):
 #!/bin/bash
 set -euo pipefail
 
-SYSROOT="{rust_sysroot}"
-
-# rust_verify needs rustc's libraries and Verus libraries
+# rust_verify needs rustc's libraries and Verus libraries.
+# Derive sysroot from rust_verify location — both live in the same repo root.
+# This ensures the path is correct whether using f.path or f.short_path.
 RUST_VERIFY="{rust_verify}"
 TOOLCHAIN_DIR=$(dirname "$RUST_VERIFY")
+SYSROOT="$TOOLCHAIN_DIR/rust_sysroot"
 case "$(uname)" in
     Darwin) export DYLD_LIBRARY_PATH="$SYSROOT/lib:$TOOLCHAIN_DIR:${{DYLD_LIBRARY_PATH:-}}" ;;
     *)      export LD_LIBRARY_PATH="$SYSROOT/lib:$TOOLCHAIN_DIR:${{LD_LIBRARY_PATH:-}}" ;;
@@ -337,7 +342,6 @@ fi
 
 exit $STATUS
 """.format(
-        rust_sysroot = rust_sysroot,
         rust_verify = rust_verify.short_path,
         z3 = z3.short_path,
         src = crate_root.short_path,
