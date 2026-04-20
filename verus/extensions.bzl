@@ -97,72 +97,61 @@ def _verus_impl(module_ctx):
 
     return module_ctx.extension_metadata(reproducible = True)
 
+# Mapping from platform triple to Bazel exec_compatible_with constraints.
+# Kept in sync with the per-platform `exec_constraints` branch in
+# verus/private/repo.bzl (_verus_release_impl).
+_PLATFORM_CONSTRAINTS = {
+    "aarch64-apple-darwin": ["@platforms//os:macos", "@platforms//cpu:aarch64"],
+    "x86_64-apple-darwin": ["@platforms//os:macos", "@platforms//cpu:x86_64"],
+    "x86_64-unknown-linux-gnu": ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+    "x86_64-pc-windows-msvc": ["@platforms//os:windows", "@platforms//cpu:x86_64"],
+}
+
 def _verus_hub_repo_impl(rctx):
-    """Create a hub repo that re-exports all platform toolchains."""
+    """Create a hub repo that registers each platform's Verus toolchain.
+
+    The hub repo emits one `toolchain()` declaration per supported platform,
+    each wrapping the platform-specific `verus_toolchain_info` provider from
+    the downloaded release repo. Declaring `toolchain()` rules (rather than
+    aliases) in the hub repo means `register_toolchains("@verus_toolchains//:all")`
+    resolves via Bazel's wildcard-package target expansion and registers all
+    platforms at once — native toolchain resolution then picks the right one
+    based on `exec_compatible_with`.
+
+    We deliberately do not emit a target literally named `all`: that name
+    shadows the wildcard, and the ambiguity previously caused
+    `register_toolchains` to resolve to a single-platform alias rather than
+    iterating over the package.
+    """
     platforms = rctx.attr.platforms
 
-    toolchain_entries = []
-    for platform in platforms:
-        repo_name = "verus_toolchains_" + platform.replace("-", "_")
-        toolchain_entries.append(
-            '    "@{repo}//:verus_toolchain",'.format(repo = repo_name),
-        )
-
-    build_content = """\
-package(default_visibility = ["//visibility:public"])
-
-# Re-export all platform toolchains.
-# Bazel's toolchain resolution selects the correct one based on exec platform.
-alias(
-    name = "all",
-    actual = ":toolchain_group",
-)
-
-# Toolchain group — register all platform variants
-{entries}
-""".format(
-        entries = "\n".join([
-            'alias(name = "toolchain_{i}", actual = "{entry}")'.format(
-                i = i,
-                entry = entry.strip().rstrip(",").strip('"'),
-            )
-            for i, entry in enumerate(toolchain_entries)
-        ]),
-    )
-
-    # Generate per-platform aliases and an :all filegroup so that
-    # register_toolchains("@verus_toolchains//:all") works AND
-    # Bazel toolchain resolution picks the right platform.
-    #
-    # The key: each platform repo already has exec_compatible_with
-    # constraints (set in repo.bzl). We just need to make them all
-    # visible from the hub repo so register_toolchains finds them.
     lines = [
         'package(default_visibility = ["//visibility:public"])',
-        '',
+        "",
     ]
 
-    # Create an alias for each platform
-    alias_names = []
+    # Emit one toolchain() wrapper per supported platform. Each wraps the
+    # platform-specific verus_toolchain_info provider, with matching
+    # exec/target constraints. Bazel's toolchain resolution then selects
+    # the correct one for the current exec platform.
     for platform in platforms:
         repo_name = "verus_toolchains_" + platform.replace("-", "_")
         slug = platform.replace("-", "_")
-        lines.append('alias(name = "{slug}", actual = "@{repo}//:verus_toolchain")'.format(
-            slug = slug,
-            repo = repo_name,
-        ))
-        alias_names.append(slug)
+        constraints = _PLATFORM_CONSTRAINTS.get(platform)
+        if not constraints:
+            # Platform supported at download time but no constraint mapping —
+            # skip rather than emitting an un-gated toolchain that could be
+            # picked for the wrong host.
+            continue
+        constraints_list = "[" + ", ".join(['"{}"'.format(c) for c in constraints]) + "]"
+        lines.append("toolchain(")
+        lines.append('    name = "{}_toolchain",'.format(slug))
+        lines.append('    toolchain = "@{}//:verus_toolchain_info",'.format(repo_name))
+        lines.append('    toolchain_type = "@rules_verus//verus:toolchain_type",')
+        lines.append("    exec_compatible_with = {},".format(constraints_list))
+        lines.append("    target_compatible_with = {},".format(constraints_list))
+        lines.append(")")
         lines.append("")
-
-    # :all target — alias to the first platform.
-    # register_toolchains("@verus_toolchains//:all") registers this one,
-    # BUT the per-platform repos are also registered individually by the
-    # module extension via use_repo + register_toolchains in MODULE.bazel.
-    if platforms:
-        first_repo = "verus_toolchains_" + platforms[0].replace("-", "_")
-        lines.append('alias(name = "all", actual = "@{repo}//:verus_toolchain")'.format(
-            repo = first_repo,
-        ))
 
     rctx.file("BUILD.bazel", "\n".join(lines) + "\n")
 
