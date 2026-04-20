@@ -306,7 +306,9 @@ sysroot (`librustc_driver`, `libstd`, etc.) alongside the Verus binaries. This m
   Verus was built against
 - **Full sandbox support** — all files are available as Bazel inputs
 - **`rules_rust` is only needed for `verus_strip`** (building from source via `crate_universe`),
-  and uses a low minimum version (`>= 0.56.0`) to avoid conflicts
+  and uses a low minimum version (`>= 0.58.0`) to avoid conflicts.
+  The 0.58.0 floor is required because earlier releases used the Bazel
+  built-in `CcInfo` symbol that current Bazel has removed.
 
 ## License
 
