@@ -23,11 +23,14 @@ pub struct StripResult {
 
 /// Strip Verus annotations from a Rust source file.
 pub fn strip_file(input: &str) -> StripResult {
-    let (preamble, body, _after) = split_at_verus_macro(input);
+    let (preamble, body, after) = split_at_verus_macro(input);
     let clean_preamble = strip_vstd_imports(&preamble);
     let stripped_body = strip_body(&body);
+    // Plain Rust trailing the verus!{} block (e.g. `#[cfg(test)] mod tests`)
+    // is passed through with vstd imports stripped, but otherwise as-is.
+    let clean_after = strip_vstd_imports(&strip_verus_close_marker(&after));
 
-    // Reassemble: preamble (comments + use statements) + stripped body
+    // Reassemble: preamble (comments + use statements) + stripped body + after
     let mut raw = String::new();
     let trimmed_pre = clean_preamble.trim_end();
     if !trimmed_pre.is_empty() {
@@ -40,6 +43,14 @@ pub fn strip_file(input: &str) -> StripResult {
             raw.push('\n');
         }
         raw.push_str(trimmed_body);
+        raw.push('\n');
+    }
+    let trimmed_after = clean_after.trim();
+    if !trimmed_after.is_empty() {
+        if !raw.is_empty() {
+            raw.push('\n');
+        }
+        raw.push_str(trimmed_after);
         raw.push('\n');
     }
 
@@ -85,13 +96,66 @@ pub fn strip_file(input: &str) -> StripResult {
 
 // ─── Phase 1: Find verus! macro ─────────────────────────────────────────
 
+/// Find the byte position of the `verus!` macro identifier, skipping over
+/// line comments, block comments, string literals, and identifier matches
+/// (e.g. `myverus!` would not match — `verus!` must be a token boundary).
+///
+/// This guards against a real bug: backtick-escaped tokens like
+/// /// Use `verus!{}` to wrap your spec
+/// would otherwise match the `find("verus!")` and corrupt the split.
+fn find_verus_macro_pos(input: &str) -> Option<usize> {
+    let bytes = input.as_bytes();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        // Line comment — runs to end of line. Doc comments (//, ///, //!) all start with //.
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
+            while pos < bytes.len() && bytes[pos] != b'\n' {
+                pos += 1;
+            }
+            continue;
+        }
+        // Block comment — handles /* ... */ but not nested.
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+            pos += 2;
+            while pos + 1 < bytes.len() && !(bytes[pos] == b'*' && bytes[pos + 1] == b'/') {
+                pos += 1;
+            }
+            pos = (pos + 2).min(bytes.len());
+            continue;
+        }
+        // String literal — skip past closing quote, honoring backslash escapes.
+        if bytes[pos] == b'"' {
+            pos += 1;
+            while pos < bytes.len() && bytes[pos] != b'"' {
+                if bytes[pos] == b'\\' && pos + 1 < bytes.len() {
+                    pos += 2;
+                    continue;
+                }
+                pos += 1;
+            }
+            pos = (pos + 1).min(bytes.len());
+            continue;
+        }
+        // Match `verus!` only if preceded by non-identifier char (token boundary).
+        if pos + 6 <= bytes.len() && &bytes[pos..pos + 6] == b"verus!" {
+            let prev_is_ident_char = pos > 0
+                && (bytes[pos - 1].is_ascii_alphanumeric() || bytes[pos - 1] == b'_');
+            if !prev_is_ident_char {
+                return Some(pos);
+            }
+        }
+        pos += 1;
+    }
+    None
+}
+
 /// Split input at the `verus! { ... }` macro boundary.
 /// Returns (text_before, body_inside_braces, text_after).
 fn split_at_verus_macro(input: &str) -> (String, String, String) {
     // Find "verus!" followed by a brace-delimited block.
     // We scan for the token sequence rather than parsing, since the
     // body contains non-standard Rust that confuses full parsers.
-    if let Some(macro_start) = input.find("verus!") {
+    if let Some(macro_start) = find_verus_macro_pos(input) {
         let after_bang = macro_start + "verus!".len();
         // Find the opening {
         let rest = &input[after_bang..];
@@ -142,6 +206,31 @@ fn strip_vstd_imports(text: &str) -> String {
         .filter(|line| !line.trim().starts_with("use vstd"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Strip a leading `} // verus!` style closing-marker line from `after`.
+/// The split positions us right after the closing `}` of the macro body;
+/// the rest of that line typically holds an end-of-block marker comment
+/// like `// verus!` which prettyplease then drops anyway.
+fn strip_verus_close_marker(text: &str) -> String {
+    // The split puts `after` starting right after the `}`. Drop everything
+    // up to the next newline if it's just whitespace + a // comment.
+    let mut chars = text.char_indices();
+    let mut newline_pos: Option<usize> = None;
+    for (idx, ch) in chars.by_ref() {
+        if ch == '\n' {
+            newline_pos = Some(idx);
+            break;
+        }
+        if ch != ' ' && ch != '\t' && ch != '/' {
+            // Line has real content — keep entire input as-is.
+            return text.to_string();
+        }
+    }
+    match newline_pos {
+        Some(p) => text[p + 1..].to_string(),
+        None => String::new(),
+    }
 }
 
 // ─── Phase 2: Strip verus body using token trees ────────────────────────
@@ -211,6 +300,14 @@ fn strip_body(body: &str) -> String {
         // Check for #[verifier::*] or #[trigger] attributes
         if is_verifier_attr_at(&trees, i) {
             i += 2; // skip # + [group]
+            continue;
+        }
+
+        // Check for Verus mode qualifier `exec` in `pub exec const`,
+        // `pub exec fn`, etc. The keyword is meaningless in plain Rust
+        // and would otherwise leak through and fail parsing.
+        if is_mode_qualifier_at(&trees, i) {
+            i += 1; // skip the `exec` ident
             continue;
         }
 
@@ -479,6 +576,25 @@ fn skip_doc_attrs(trees: &[TokenTree], pos: usize) -> usize {
         j += 2; // skip # + [doc = "..."]
     }
     j
+}
+
+/// Check if `trees[pos]` is a Verus mode qualifier (`exec`) used as an
+/// item modifier — i.e. immediately followed by `const`/`fn`/`static`.
+/// Does NOT match `spec` or `proof` because those mark items that get
+/// stripped wholesale by try_skip_verus_item.
+fn is_mode_qualifier_at(trees: &[TokenTree], pos: usize) -> bool {
+    let kw = match trees.get(pos) {
+        Some(TokenTree::Ident(id)) => id.to_string(),
+        _ => return false,
+    };
+    if kw != "exec" {
+        return false;
+    }
+    let next = match trees.get(pos + 1) {
+        Some(TokenTree::Ident(id)) => id.to_string(),
+        _ => return false,
+    };
+    matches!(next.as_str(), "const" | "fn" | "static")
 }
 
 fn is_verifier_attr_at(trees: &[TokenTree], pos: usize) -> bool {
@@ -799,6 +915,91 @@ pub proof fn lemma_foo()
         assert!(result.output.contains("fn new"), "missing new fn");
         assert!(result.output.contains("fn inc"), "missing inc fn");
         assert!(result.output.contains("//! Module doc."), "missing doc");
+    }
+
+    // ─── Regression tests for three bugs hit in pulseengine/relay ──────
+
+    /// Bug 1: `pub exec const FOO = ...` was passed through as-is, leaving
+    /// the `exec` keyword in plain output where it does not parse.
+    #[test]
+    fn test_strip_exec_const_qualifier() {
+        let input = r#"
+use vstd::prelude::*;
+
+verus! {
+#[verifier::external_body]
+pub exec const TABLE: [u32; 4] = [1, 2, 3, 4];
+} // verus!
+"#;
+        let result = strip_file(input);
+        assert!(result.errors.is_empty(), "parse errors: {:?}\noutput:\n{}", result.errors, result.output);
+        assert!(!result.output.contains("exec const"), "still contains `exec const`:\n{}", result.output);
+        assert!(result.output.contains("pub const TABLE"), "missing const decl:\n{}", result.output);
+        assert!(!result.output.contains("verifier"), "verifier attr leaked:\n{}", result.output);
+    }
+
+    /// Bug 1 variant: `pub exec fn` should also have `exec` stripped.
+    #[test]
+    fn test_strip_exec_fn_qualifier() {
+        let input = r#"
+use vstd::prelude::*;
+verus! {
+pub exec fn double(x: u32) -> u32 { x * 2 }
+} // verus!
+"#;
+        let result = strip_file(input);
+        assert!(result.errors.is_empty(), "parse errors: {:?}\noutput:\n{}", result.errors, result.output);
+        assert!(!result.output.contains("exec fn"), "still contains `exec fn`:\n{}", result.output);
+        assert!(result.output.contains("pub fn double"), "missing fn decl:\n{}", result.output);
+    }
+
+    /// Bug 2: A backtick-escaped `verus!` token inside a `///` doc comment
+    /// matched the naive `find("verus!")` and corrupted the macro split.
+    /// Real-world example from relay/relay-primitives/src/crc32.rs.
+    #[test]
+    fn test_backtick_verus_in_doc_comment_does_not_split_early() {
+        let input = r#"
+//! Module doc.
+
+/// Declared outside `verus!{}` so it's accepted by both Verus and stripped Rust.
+pub const SIZE: usize = 6;
+
+use vstd::prelude::*;
+
+verus! {
+pub fn real_fn() -> u32 { 42 }
+} // verus!
+"#;
+        let result = strip_file(input);
+        assert!(result.errors.is_empty(), "parse errors: {:?}\noutput:\n{}", result.errors, result.output);
+        assert!(result.output.contains("pub const SIZE"), "lost the pre-macro const:\n{}", result.output);
+        assert!(result.output.contains("real_fn"), "lost the in-macro fn:\n{}", result.output);
+    }
+
+    /// Bug 3: Content after `verus!{}` (test modules, additional impls) was
+    /// silently dropped because `_after` was discarded in strip_file.
+    #[test]
+    fn test_preserves_content_after_verus_block() {
+        let input = r#"
+use vstd::prelude::*;
+verus! {
+pub fn add(a: u32, b: u32) -> u32 { a + b }
+} // verus!
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn one_plus_one() {
+        assert_eq!(add(1, 1), 2);
+    }
+}
+"#;
+        let result = strip_file(input);
+        assert!(result.errors.is_empty(), "parse errors: {:?}\noutput:\n{}", result.errors, result.output);
+        assert!(result.output.contains("fn add"), "lost the verus fn:\n{}", result.output);
+        assert!(result.output.contains("mod tests"), "lost the trailing test module:\n{}", result.output);
+        assert!(result.output.contains("one_plus_one"), "lost the test fn:\n{}", result.output);
     }
 
     #[test]
