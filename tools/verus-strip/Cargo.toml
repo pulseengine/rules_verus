@@ -12,5 +12,5 @@ path = "src/main.rs"
 
 [dependencies]
 proc-macro2 = "1"
-syn = { version = "2", features = ["full", "parsing", "visit"] }
+syn = { version = "3", features = ["full", "parsing", "visit"] }
 prettyplease = "0.3"
