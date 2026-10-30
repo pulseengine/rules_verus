@@ -9,7 +9,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2bfe0f4c752e450fc2faf62654f1c134747922825d5b04ca717b8874f41a40c0"
 dependencies = [
  "proc-macro2",
- "syn 3.0.9",
+ "syn",
 ]
 
 [[package]]
@@ -32,22 +32,12 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.117"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
-dependencies = [
- "proc-macro2",
- "quote",
- "unicode-ident",
-]
-
-[[package]]
-name = "syn"
 version = "3.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b"
 dependencies = [
  "proc-macro2",
+ "quote",
  "unicode-ident",
 ]
 
@@ -63,5 +53,5 @@ version = "0.2.0"
 dependencies = [
  "prettyplease",
  "proc-macro2",
- "syn 2.0.117",
+ "syn",
 ]
