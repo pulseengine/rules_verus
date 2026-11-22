@@ -1,0 +1,11 @@
+# Planted bad inputs for CI checks, run with pulseengine/plant (`plant`).
+# Each control runs its check on a clean copy of HEAD (must pass) and on a
+# copy with its plant directory overlaid (must fail).
+
+[[control]]
+id      = "verus-strip-failing-test"
+check   = "verus-strip (build, test)"
+run     = "cd tools/verus-strip && cargo test --locked --no-fail-fast"
+plant   = "ci-controls/verus-strip-failing-test"
+stderr_or_stdout_matches = "planted failure: the Test step must go red"
+timeout = 900
