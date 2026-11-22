@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verus-strip:
+    name: verus-strip (build, test)
+    # Fail-closed fork guard: fork PRs run on a hosted runner, never self-hosted.
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","linux","x64","light"]') || 'ubuntu-24.04' }}
+    defaults:
+      run:
+        working-directory: tools/verus-strip
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - name: Build
+        run: cargo build --locked
+      - name: Test
+        # Planted bad input: control verus-strip-failing-test in ci-controls.toml.
+        run: cargo test --locked --no-fail-fast
